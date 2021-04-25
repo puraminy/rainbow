@@ -8,6 +8,86 @@ import tensorflow as tf
 from . import utils
 
 
+class TvsTask(t5.data.Task):
+    """A ``Task`` for TVS formatted datasets.
+
+    Parameters
+    ----------
+    name : str, required
+        The name of the task. It must be unique.
+    split_to_filepattern : Dict[str, str], required
+        A dictionary mapping each split (``"train"``, ``"validation"``, and
+        ``"test"``) to a file pattern (glob) matching all the files for that
+        split.
+    num_input_examples : Dict[str, int], required
+        A dictionary mapping each split's name to the number of input
+        examples in the split.
+    text_preprocessor : Union[Callable, Sequence[Callable]], required
+        The text preprocessor function or a sequence of such functions.
+    truncate_to : Optional[int], optional (default=None)
+        The number of examples the training set should have after
+        truncation. To use truncation, the training set's split MUST be
+        called "train". Truncation samples a random subset of the data
+        in a deterministic way using a PRNG, based on the name of the
+        dataset, it's original size, and the desired truncated size. If
+        ``truncate_to`` is ``None``, the full training set will be used.
+    **kwargs
+        Additional keyword arguments passed to the super class's (``Task``)
+        constructor.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        split_to_filepattern: Dict[str, str],
+        num_input_examples: Dict[str, int],
+        text_preprocessor: Union[Callable, Sequence[Callable]],
+        metric_fns: Sequence[Callable],
+        truncate_to: Optional[int] = None,
+        **kwargs,
+    ) -> None:
+        self.split_paths = split_to_filepattern
+        self.exampes_nums = num_input_examples
+
+        def dataset_fn(split, shuffle_files=False):
+            # We only have one file for each split.
+            del shuffle_files
+
+            # Load lines from the text file as examples.
+            ds = tf.data.TextLineDataset(split_to_filepattern[split])
+            # Split each "<question>\t<answer>" example into (question, answer) tuple.
+            ds = ds.map(
+                functools.partial(
+                    tf.io.decode_csv,
+                    record_defaults=["", ""],
+                    field_delim="\t",
+                    use_quote_delim=False,
+                ),
+                num_parallel_calls=tf.data.experimental.AUTOTUNE,
+            )
+            # Map each tuple to a {"question": ... "answer": ...} dict.
+            ds = ds.map(
+                lambda *ex: dict(zip(["input_text", "target_text"], ex))
+            )
+            if truncate_to is not None and split == "train":
+                ds = ds.shuffle(
+                    buffer_size=int(num_input_examples[split]),
+                    seed=utils.string_to_seed(f"{name}_{truncate_to}"),
+                    reshuffle_each_iteration=False,
+                ).take(count=truncate_to)
+            return ds
+
+        super().__init__(
+            name=name,
+            dataset_fn=dataset_fn,
+            splits=split_to_filepattern.keys(),
+            text_preprocessor=text_preprocessor,
+            metric_fns=metric_fns,
+            num_input_examples=num_input_examples,
+            **kwargs,
+        )
+
+
 class CsvTask(t5.data.Task):
     """A ``Task`` for CSV formatted datasets.
 
@@ -62,7 +142,6 @@ class CsvTask(t5.data.Task):
         split_to_filepattern: Dict[str, str],
         num_input_examples: Dict[str, int],
         text_preprocessor: Union[Callable, Sequence[Callable]],
-        sentencepiece_model_path: str,
         metric_fns: Sequence[Callable],
         record_defaults: List[Union[tf.DType, tf.Tensor]],
         compression_type: Optional[str] = None,
@@ -75,6 +154,29 @@ class CsvTask(t5.data.Task):
         truncate_to: Optional[int] = None,
         **kwargs,
     ) -> None:
+        self.split_paths = split_to_filepattern
+        self.exampes_nums = num_input_examples
+
+        def normalize_text(text):
+            """Lowercase and remove quotes and tags from a TensorFlow string."""
+            text = tf.strings.lower(text)
+            text = tf.strings.regex_replace(text, "'(.*)'", r"\1")
+            text = tf.strings.regex_replace(text, "<[^>]+>", " ")
+            return text
+
+        def rt_preprocessor(ds):
+            def remove_tags(*row):
+                tf.print("=============== New row ==========")
+                r1 = row[1]
+                r2 = normalize_text(row[2])  # normalize_text(row[2])
+                tf.print("input:", r1)
+                tf.print("output:", r2)
+                return {"inputs": r1, "targets": r2}
+
+            return ds.map(
+                remove_tags, num_parallel_calls=tf.data.experimental.AUTOTUNE
+            )
+
         def dataset_fn(split, shuffle_files=False):
             """A function for creating the Datset for the split."""
             # N.B. The shuffle_files argument is ignored, and only used
@@ -110,7 +212,7 @@ class CsvTask(t5.data.Task):
             # Optionally truncate the dataset.
             if truncate_to is not None and split == "train":
                 dataset = dataset.shuffle(
-                    buffer_size=num_input_examples[split],
+                    buffer_size=int(num_input_examples[split]),
                     seed=utils.string_to_seed(f"{name}_{truncate_to}"),
                     reshuffle_each_iteration=False,
                 ).take(count=truncate_to)
@@ -122,7 +224,7 @@ class CsvTask(t5.data.Task):
             dataset_fn=dataset_fn,
             splits=split_to_filepattern.keys(),
             text_preprocessor=text_preprocessor,
-            sentencepiece_model_path=sentencepiece_model_path,
+            # sentencepiece_model_path=sentencepiece_model_path,
             metric_fns=metric_fns,
             num_input_examples=num_input_examples,
             **kwargs,

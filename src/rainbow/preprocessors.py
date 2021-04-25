@@ -6,7 +6,9 @@ import tensorflow as tf
 
 
 def make_add_field_names_preprocessor(
-    field_names: Sequence[str], field_indices: Optional[Sequence[int]] = None,
+    field_names: Sequence[str],
+    field_indices: Optional[Sequence[int]] = None,
+    direction=None,
 ) -> Callable:
     """Make a preprocessor to add field names to a dataset.
 
@@ -45,7 +47,20 @@ def make_add_field_names_preprocessor(
             }
         )
 
-    return add_field_names_preprocessor
+    def my_preprocessor(ds):
+        def to_inputs_and_targets(*row):
+            inp = row[1]
+            if direction:
+                inp = direction + ":" + inp
+                # inp = tf.strings.join([direction, row[1]])
+            return {"inputs": inp, "targets": row[2]}
+
+        return ds.map(
+            to_inputs_and_targets,
+            num_parallel_calls=tf.data.experimental.AUTOTUNE,
+        )
+
+    return my_preprocessor
 
 
 def make_filter_preprocessor(predicate: Callable) -> Callable:
@@ -73,3 +88,42 @@ def make_filter_preprocessor(predicate: Callable) -> Callable:
         return dataset.filter(predicate)
 
     return filter_preprocessor
+
+
+def remove_tags(text):
+    """Lowercase and remove quotes from a TensorFlow string."""
+    # text = tf.strings.lower(text)
+    # text = tf.strings.regex_replace(text,"<", "[")
+    return text
+
+
+def tvs_preprocessor(ds):
+    def to_inputs_and_targets(ex):
+        return {
+            "inputs": tf.strings.join(
+                ["atomic: ", normalize_text(ex["input_text"])]
+            ),
+            "targets": normalize_text(ex["target_text"]),
+        }
+
+    return ds.map(
+        to_inputs_and_targets, num_parallel_calls=tf.data.experimental.AUTOTUNE
+    )
+
+
+def normalize_text(text):
+    """Lowercase and remove quotes and tags from a TensorFlow string."""
+    text = tf.strings.lower(text)
+    text = tf.strings.regex_replace(text, "'(.*)'", r"\1")
+    text = tf.strings.regex_replace(text, "<[^>]+>", " ")
+    return text
+
+
+def rt_preprocessor(ds):
+    def remove_tags(*row):
+        r1 = row[1]
+        r2 = normalize_text(row[2])  # normalize_text(row[2])
+        tf.print(r2)
+        return {"inputs": r1, "targets": r2}
+
+    return ds.map(remove_tags, num_parallel_calls=tf.data.experimental.AUTOTUNE)

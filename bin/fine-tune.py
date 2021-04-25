@@ -3,34 +3,33 @@
 """Fine-tune the model on the rainbow datasets."""
 
 import logging
-
+import os
 import click
 import t5
 import tensorflow as tf
-
-from rainbow import utils
+import tensorflow_datasets as tfds
+import sys
+from rainbow import utils, settings
 
 import rainbow.mixtures
 
+tf.get_logger().setLevel("ERROR")
 # N.B. We must import rainbow.mixtures here so that the mixtures are registered
 # and available for training.
 
-
 logger = logging.getLogger(__name__)
 
-
 PRETRAINED_MODELS = {
-    "small": "gs://t5-data/pretrained_models/small",
-    "base": "gs://t5-data/pretrained_models/base",
-    "large": "gs://t5-data/pretrained_models/large",
-    "3B": "gs://t5-data/pretrained_models/3B",
-    "11B": "gs://t5-data/pretrained_models/11B",
+    "t5_small": os.path.join(settings.BASE_DIR, "pretrained/t5/small"),
+    "t5_large": os.path.join(settings.BASE_DIR, "pretrained/t5/large"),
+    "mt5_small": os.path.join(settings.BASE_DIR, "pretrained/mt5/small"),
+    "mt5_large": os.path.join(settings.BASE_DIR, "pretrained/mt5/large"),
 }
 
 
 @click.command()
 @click.argument("mixture", type=str)
-@click.argument("results_dir", type=str)
+# @click.argument("results_dir", type=str)
 @click.option(
     "--split",
     type=str,
@@ -38,9 +37,9 @@ PRETRAINED_MODELS = {
     help="The split on which to train. Defaults to 'train'.",
 )
 @click.option(
-    "--pretrained-model",
+    "--pm",
     type=str,
-    default="3B",
+    default="t5_small",
     help="The path to or name of the pretrained model. Defaults to 3B.",
 )
 @click.option(
@@ -56,13 +55,7 @@ PRETRAINED_MODELS = {
     help="The learning rate to use for training. Defaults to 3e-3.",
 )
 @click.option(
-    "--batch-size",
-    type=int,
-    default=16,
-    help=(
-        "The batch size to use for training. For efficient training on the"
-        " TPU, choose a multiple of either 8 or 128. Defaults to 16."
-    ),
+    "--extra", type=str, default="",
 )
 @click.option(
     "--model-parallelism",
@@ -82,78 +75,71 @@ PRETRAINED_MODELS = {
 @click.option(
     "--n-checkpoints-to-keep",
     type=int,
-    default=4,
+    default=2,
     help=(
         "The number of checkpoints to keep during fine-tuning. Defaults"
         " to 4."
     ),
 )
-@click.option(
-    "--tpu-name",
-    type=str,
-    required=True,
-    envvar="TPU_NAME",
-    help="The name of the TPU. Defaults to the TPU_NAME environment variable.",
-)
-@click.option(
-    "--tpu-topology",
-    type=str,
-    required=True,
-    envvar="TPU_TOPOLOGY",
-    help=(
-        "The topology of the TPU. Defaults to the TPU_TOPOLOGY environment"
-        " variable."
-    ),
-)
+# def cli()
+#   pass
 def fine_tune(
     mixture: str,
-    results_dir: str,
+    #    results_dir: str,
     split: str,
-    pretrained_model: str,
+    pm: str,
     n_steps: int,
     learning_rate: float,
-    batch_size: int,
+    extra: str,
     model_parallelism: int,
     save_checkpoints_steps: int,
     n_checkpoints_to_keep: int,
-    tpu_name: str,
-    tpu_topology: str,
 ) -> None:
     """Fine-tune the model on MIXTURE, writing results to RESULTS_DIR."""
+    if not pm in PRETRAINED_MODELS:
+        raise ValueError(pm + " path isn't introduced in PRETRAINED_MODELS")
+
+    if pm.startswith("t5_") and mixture.startswith("mt5_"):
+        raise ValueError(pm + " isn't matched with the mixture")
+
+    bs = {"t5_small": 8, "t5_large": 2}
+    batch_size = bs[pm]
+    print("Using ", pm)
+    print("============================")
     utils.configure_logging(clear=True)
+    if extra:
+        results_dir = os.path.join(
+            settings.BASE_DIR, "models/rb", pm, extra + "/" + mixture
+        )
+    else:
+        results_dir = os.path.join(settings.BASE_DIR, "models/rb", pm, mixture)
+
+    MODEL_TYPE = pm.split("_")[0]
 
     # Validate arguments.
 
-    if not results_dir.startswith("gs://"):
-        raise ValueError(f"RESULTS_DIR ({results_dir}) must be a GCS path.")
-
-    if pretrained_model.startswith("gs://"):
-        if not tf.io.gfile.exists(pretrained_model):
-            raise IOError(
-                f"--pretrained-model ({pretrained_model}) does not exist."
-            )
-    else:
-        if pretrained_model not in PRETRAINED_MODELS:
-            raise ValueError(
-                f"--pretrained-model ({pretrained_model}) not recognized. It"
-                f" must either be a GCS path or one of"
-                f' {", ".join(PRETRAINED_MODELS.keys())}.'
-            )
-
+    task = t5.data.MixtureRegistry.get(mixture)
+    ds = task.get_dataset(
+        split="train", sequence_length={"inputs": 128, "targets": 128}
+    )
+    # bbb
+    print("A few preprocessed validation examples...")
+    for ex in tfds.as_numpy(ds.take(5)):
+        tf.print(ex)
     # Process arguments.
-
-    if pretrained_model in PRETRAINED_MODELS:
-        pretrained_model = PRETRAINED_MODELS[pretrained_model]
+    print("=====================================================")
+    pm = PRETRAINED_MODELS[pm]
 
     # Run fine-tuning.
 
     model = t5.models.MtfModel(
+        tpu=None,
         model_dir=results_dir,
-        tpu=tpu_name,
-        tpu_topology=tpu_topology,
         model_parallelism=model_parallelism,
         batch_size=batch_size,
-        sequence_length={"inputs": 512, "targets": 512},
+        sequence_length={"inputs": 128, "targets": 128},
+        mesh_shape="model:1,batch:1",
+        mesh_devices=["gpu:0"],
         learning_rate_schedule=learning_rate,
         save_checkpoints_steps=save_checkpoints_steps,
         keep_checkpoint_max=n_checkpoints_to_keep,
@@ -162,11 +148,25 @@ def fine_tune(
 
     model.finetune(
         mixture_or_task_name=mixture,
-        pretrained_model_dir=pretrained_model,
+        pretrained_model_dir=pm,
         finetune_steps=n_steps,
         split=split,
     )
+    export_dir = os.path.join(results_dir, "export")
+    task_vocab = t5.models.utils.get_vocabulary(mixture)
+
+    model.batch_size = 1  # make one prediction per call
+    saved_model_path = model.export(
+        export_dir,
+        checkpoint_step=-1,  # use most recent
+        beam_size=1,  # no beam search
+        vocabulary=task_vocab,
+        temperature=1.0,  # sample according to predicted distribution
+    )
+    print("'cd ", results_dir, "'")
 
 
+mixture = "t5_atomic_backward_mixture"  # @param {type:"string"}
 if __name__ == "__main__":
-    fine_tune()  # pylint: disable=no-value-for-parameter
+    fine_tune()
+    # fine_tune(mixture, "train", "t5_small", 25000, 0.003, 8, 1, 5000, 2)

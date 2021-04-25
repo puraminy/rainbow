@@ -55,36 +55,37 @@ def prepare(src: str, dst: str, force_download: bool) -> None:
 
     # Validate the arguments.
 
-    if tf.io.gfile.exists(dst):
-        raise IOError(f"Destination directory ({dst}) already exists.")
+    # if tf.io.gfile.exists(dst):
+    #    raise IOError(f"Destination directory ({dst}) already exists.")
 
     # Download and preprocess the datasets.
-
-    preparation.rainbow.RainbowPreparer().prepare(
-        src=src, dst=dst, force_download=force_download
-    )
 
     preparation.atomic.AtomicPreparer().prepare(
         src=src, dst=dst, force_download=force_download
     )
 
-    preparation.conceptnet.ConceptNetPreparer().prepare(
-        src=src, dst=dst, force_download=force_download
-    )
+    if False:
+        preparation.rainbow.RainbowPreparer().prepare(
+            src=src, dst=dst, force_download=force_download
+        )
 
-    preparation.commonsenseqa.CommonsenseQAPreparer().prepare(
-        src=src, dst=dst, force_download=force_download
-    )
+        preparation.conceptnet.ConceptNetPreparer().prepare(
+            src=src, dst=dst, force_download=force_download
+        )
 
-    preparation.joci.JOCIPreparer().prepare(
-        src=src, dst=dst, force_download=force_download
-    )
+        preparation.commonsenseqa.CommonsenseQAPreparer().prepare(
+            src=src, dst=dst, force_download=force_download
+        )
 
-    preparation.cyc.CycICPreparer().prepare(
-        src=src, dst=dst, force_download=force_download
-    )
+        preparation.joci.JOCIPreparer().prepare(
+            src=src, dst=dst, force_download=force_download
+        )
 
-    logger.info(f"All datasets have been prepared.")
+        preparation.cyc.CycICPreparer().prepare(
+            src=src, dst=dst, force_download=force_download
+        )
+
+        logger.info(f"All datasets have been prepared.")
 
 
 if __name__ == "__main__":
