@@ -4,75 +4,114 @@ import os
 
 import t5
 import tensorflow as tf
-import seqio
-
+import functools
 from . import core, datasets, preprocessors, settings
-
+BASE_DIR = "/drive2/"
 T5_DEFAULT_SPM_PATH = os.path.join(
-    settings.BASE_DIR, "pretrained/t5/sentencepiece.model"
+    BASE_DIR, "pretrained/t5/sentencepiece.model"
 )
 MT5_DEFAULT_SPM_PATH = os.path.join(
-    settings.BASE_DIR, "pretrained/mt5/sentencepiece.model"
+    BASE_DIR, "pretrained/mt5/sentencepiece.model"
 )
 
 
 T5_DEFAULT_VOCAB = t5.data.SentencePieceVocabulary(T5_DEFAULT_SPM_PATH)
 MT5_DEFAULT_VOCAB = t5.data.SentencePieceVocabulary(MT5_DEFAULT_SPM_PATH)
 MT5_OUTPUT_FEATURES = {
-    "inputs": seqio.Feature(
+    "inputs": t5.data.Feature(
         vocabulary=MT5_DEFAULT_VOCAB, add_eos=True, required=False
     ),
-    "targets": seqio.Feature(vocabulary=MT5_DEFAULT_VOCAB, add_eos=True),
+    "targets": t5.data.Feature(vocabulary=MT5_DEFAULT_VOCAB, add_eos=True),
 }
 
 T5_OUTPUT_FEATURES = {
-    "inputs": seqio.Feature(
-        vocabulary=t5.data.get_default_vocabulary(), add_eos=True
+    "inputs": t5.data.Feature(
+        vocabulary=T5_DEFAULT_VOCAB, add_eos=True
     ),
-    "targets": seqio.Feature(
-        vocabulary=t5.data.get_default_vocabulary(), add_eos=True
+    "targets": t5.data.Feature(
+        vocabulary=T5_DEFAULT_VOCAB, add_eos=True
     ),
 }
 
 # Create tasks for the datasets.
 t5.data.TaskRegistry.add(
-    "t5_tvs_atomic",
+    "eng_task",
     # Specify the task type.
     core.TvsTask,
     # Supply a function which returns a tf.data.Dataset.
     split_to_filepattern={
         split: os.path.join(
-            settings.PREPROCESSED_DATASETS_DIR, "atomic_" + split + ".tsv"
+            "/drive3/pouramini/data/atomic/", "natural_all_atomic_" + split + ".tsv"
         )
         for split in ["train", "validation"]
     },
-    num_input_examples={"train": 600, "validation": 700},
+    num_input_examples={"train": 708000, "validation": 79000},
     text_preprocessor=[preprocessors.tvs_preprocessor],
     # Lowercase targets before computing metrics.
-    postprocess_fn=t5.data.postprocessors.lower_text,
+    # postprocess_fn=t5.data.postprocessors.lower_text,
     # output_features=DEFAULT_OUTPUT_FEATURES
     # We'll use accuracy as our evaluation metric.
     metric_fns=[t5.evaluation.metrics.accuracy],
     # Not required, but helps for mixing and auto-caching.
     # num_input_examples=num_atomic_examples
+    output_features=MT5_OUTPUT_FEATURES
 )
 
-# seqio.TaskRegistry.add(
-#    "nq_context_free",
-#    source=seqio.TextLineDataSource(
-#        split_to_filepattern=nq_tsv_path,
-#        num_input_examples=num_nq_examples),
-#    preprocessors=[
-#      functools.partial(
-#          t5.data.preprocessors.parse_tsv,
-#          field_names=["question", "answer"]),
-#      trivia_preprocessor,
-#      seqio.preprocessors.tokenize_and_append_eos,
-#    ],
-#    postprocess_fn=t5.data.postprocessors.lower_text,
-#    metric_fns=[t5.evaluation.metrics.accuracy],
-#    output_features=DEFAULT_OUTPUT_FEATURES,
-# )
+# Create tasks for the datasets.
+t5.data.TaskRegistry.add(
+    "per_task",
+    # Specify the task type.
+    core.TvsTask,
+    # Supply a function which returns a tf.data.Dataset.
+    split_to_filepattern={
+        split: os.path.join(
+            "/drive3/pouramini/data/atomic/", "translate_" + split + ".tsv"
+        )
+        for split in ["train", "validation"]
+    },
+    num_input_examples={"train": 708000, "validation": 79000},
+    text_preprocessor=[preprocessors.tvs_preprocessor],
+    # Lowercase targets before computing metrics.
+    # postprocess_fn=t5.data.postprocessors.lower_text,
+    # output_features=DEFAULT_OUTPUT_FEATURES
+    # We'll use accuracy as our evaluation metric.
+    metric_fns=[t5.evaluation.metrics.accuracy],
+    # Not required, but helps for mixing and auto-caching.
+    # num_input_examples=num_atomic_examples
+    output_features=MT5_OUTPUT_FEATURES
+)
+split_list = {}
+split_list["e2e"] = ["e2e", "p2e"]
+split_list["e2p"] = ["e2p", "p2p"]
+split_list["p2e"] = ["e2e", "p2e"]
+split_list["p2p"] = ["p2p", "e2p"]
+for lang in ["e2e", "e2p", "p2e", "p2p"]:
+    for rel in ["xAttr", "xEffect", "oEffect", "xIntent", "xWant", "oWant", "xNeed", "xReact" , "oReact"]:
+        paths={
+            split: os.path.join(
+                "/drive3/pouramini/data/atomic/mix/", f"{split}_{rel}_validation.tsv"
+            )
+            for split in split_list[lang]
+        }
+        paths["train"] = os.path.join("/drive3/pouramini/data/atomic/mix/", f"{lang}_{rel}_train.tsv")
+        num_lines =  {split: sum(1 for line in open(path)) for split,path in paths.items()}
+        t5.data.TaskRegistry.add(
+            f"{lang}_{rel}_task",
+            # Specify the task type.
+            core.TvsTask,
+            # Supply a function which returns a tf.data.Dataset.
+            split_to_filepattern=paths,
+            num_input_examples=num_lines,
+            text_preprocessor=[preprocessors.tsv_rel_preprocessor(lang)],
+            # Lowercase targets before computing metrics.
+            # postprocess_fn=t5.data.postprocessors.lower_text,
+            # output_features=DEFAULT_OUTPUT_FEATURES
+            # We'll use accuracy as our evaluation metric.
+            metric_fns=[t5.evaluation.metrics.accuracy],
+            # Not required, but helps for mixing and auto-caching.
+            # num_input_examples=num_atomic_examples
+            output_features=MT5_OUTPUT_FEATURES #if lang == "per" else None
+        )
 
 # Create the rainbow tasks.
 for dataset in datasets.RAINBOW_DATASETS.values():
