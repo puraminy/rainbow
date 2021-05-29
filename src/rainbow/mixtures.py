@@ -84,6 +84,37 @@ for dataset in datasets.COMMONSENSE_DATASETS.values():
             f"{base_name}_mixture", [f"{base_name}_task"], default_rate=1.0
         )
 
+## My task
+for lang in ["e2e", "e2p", "p2e", "p2p"]:
+    t5.data.MixtureRegistry.add(
+        f"{lang}_rel_mixture",
+        [
+            f"{lang}_{rel}_task"
+            for rel in ["xAttr", "xEffect", "oEffect", "xIntent", "xWant", "oWant", "xNeed", "xReact" , "oReact"]
+        ],
+        default_rate=rates.proportional_rate,
+    )
+
+t5.data.MixtureRegistry.add(
+    f"l2l_rel_mixture",
+    [
+        f"e2e_{rel}_task"
+        for rel in ["xAttr", "xEffect", "oEffect", "xIntent", "xWant", "oWant", "xNeed", "xReact" , "oReact"]
+    ] + 
+    [
+        f"e2p_{rel}_task"
+        for rel in ["xAttr", "xEffect", "oEffect", "xIntent", "xWant", "oWant", "xNeed", "xReact" , "oReact"]
+    ] +
+    [
+        f"p2e_{rel}_task"
+        for rel in ["xAttr", "xEffect", "oEffect", "xIntent", "xWant", "oWant", "xNeed", "xReact" , "oReact"]
+    ] +
+    [
+        f"p2p_{rel}_task"
+        for rel in ["xAttr", "xEffect", "oEffect", "xIntent", "xWant", "oWant", "xNeed", "xReact" , "oReact"]
+    ],
+    default_rate=rates.proportional_rate,
+)
 # Create the Rainbow mixtures.
 for rate_name, rate_func in rates.MIXING_RATES.items():
     t5.data.MixtureRegistry.add(
@@ -94,7 +125,6 @@ for rate_name, rate_func in rates.MIXING_RATES.items():
         ],
         default_rate=rate_func,
     )
-
 
 # Create leave-one-out Rainbow mixtures.
 for dataset in datasets.RAINBOW_DATASETS.values():
