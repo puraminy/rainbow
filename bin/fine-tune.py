@@ -18,12 +18,16 @@ tf.get_logger().setLevel("ERROR")
 # and available for training.
 
 logger = logging.getLogger(__name__)
-
+BASE_DIR = "/drive2/"
 PRETRAINED_MODELS = {
-    "t5_small": os.path.join(settings.BASE_DIR, "pretrained/t5/small"),
-    "t5_large": os.path.join(settings.BASE_DIR, "pretrained/t5/large"),
-    "mt5_small": os.path.join(settings.BASE_DIR, "pretrained/mt5/small"),
-    "mt5_large": os.path.join(settings.BASE_DIR, "pretrained/mt5/large"),
+    "t5_small": os.path.join(BASE_DIR, "pretrained/t5/small"),
+    "t5_large": os.path.join(BASE_DIR, "pretrained/t5/large"),
+    "mt5_small": os.path.join(BASE_DIR, "pretrained/mt5/small"),
+    "mt5_base": os.path.join(BASE_DIR, "pretrained/mt5/base"),
+    "mt5_sa2": os.path.join(BASE_DIR, "pretrained/mt5/small_atomic_2"),
+    "mt5_ba2": os.path.join(BASE_DIR, "pretrained/mt5/base_atomic_2"),
+    "mt5_snaa": os.path.join(BASE_DIR, "pretrained/mt5/small_natural_all_atomic"),
+    "mt5_large": os.path.join(BASE_DIR, "pretrained/mt5/large"),
 }
 
 
@@ -58,15 +62,15 @@ PRETRAINED_MODELS = {
     "--extra", type=str, default="",
 )
 @click.option(
-    "--model-parallelism",
+    "--bs",
     type=int,
     default=8,
-    help="The degree of model parallelism to use. Defaults to 8.",
+    help="Batch size",
 )
 @click.option(
     "--save-checkpoints-steps",
     type=int,
-    default=5000,
+    default=15000,
     help=(
         "The number of steps to take before saving a checkpoint. Defaults to"
         " 5000."
@@ -75,7 +79,7 @@ PRETRAINED_MODELS = {
 @click.option(
     "--n-checkpoints-to-keep",
     type=int,
-    default=2,
+    default=3,
     help=(
         "The number of checkpoints to keep during fine-tuning. Defaults"
         " to 4."
@@ -91,7 +95,7 @@ def fine_tune(
     n_steps: int,
     learning_rate: float,
     extra: str,
-    model_parallelism: int,
+    bs: int,
     save_checkpoints_steps: int,
     n_checkpoints_to_keep: int,
 ) -> None:
@@ -102,10 +106,15 @@ def fine_tune(
     if pm.startswith("t5_") and mixture.startswith("mt5_"):
         raise ValueError(pm + " isn't matched with the mixture")
 
-    bs = {"t5_small": 8, "t5_large": 2}
-    batch_size = bs[pm]
-    print("Using ", pm)
-    print("============================")
+    if "large" in pm or ("mt5" in pm):
+        bs = 4
+    if "large" in pm and ("mt5" in pm):
+        bs = 1
+    if "base" in pm and ("mt5" in pm):
+        bs = 1
+    batch_size = bs
+    print("Using ", pm, " Batch Size:", bs)
+    print("==============================================")
     utils.configure_logging(clear=True)
     if extra:
         results_dir = os.path.join(
@@ -118,15 +127,15 @@ def fine_tune(
 
     # Validate arguments.
 
-    task = t5.data.MixtureRegistry.get(mixture)
-    ds = task.get_dataset(
-        split="train", sequence_length={"inputs": 128, "targets": 128}
-    )
-    # bbb
-    print("A few preprocessed validation examples...")
-    for ex in tfds.as_numpy(ds.take(5)):
-        tf.print(ex)
-    # Process arguments.
+#    task = t5.data.MixtureRegistry.get(mixture)
+#    ds = task.get_dataset(
+#        split="train", sequence_length={"inputs": 128, "targets": 128} 
+#    )
+#    # bbb
+#    print("A few preprocessed validation examples...")
+#    for ex in tfds.as_numpy(ds.take(5)):
+#        tf.print(ex)
+#    # Process arguments.
     print("=====================================================")
     pm = PRETRAINED_MODELS[pm]
 
@@ -135,7 +144,7 @@ def fine_tune(
     model = t5.models.MtfModel(
         tpu=None,
         model_dir=results_dir,
-        model_parallelism=model_parallelism,
+        model_parallelism=8,
         batch_size=batch_size,
         sequence_length={"inputs": 128, "targets": 128},
         mesh_shape="model:1,batch:1",
@@ -163,7 +172,7 @@ def fine_tune(
         vocabulary=task_vocab,
         temperature=1.0,  # sample according to predicted distribution
     )
-    print("'cd ", results_dir, "'")
+    print("cd ", results_dir, "")
 
 
 mixture = "t5_atomic_backward_mixture"  # @param {type:"string"}

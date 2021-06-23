@@ -33,6 +33,32 @@ T5_OUTPUT_FEATURES = {
     ),
 }
 
+for rel in ["xAttr", "xEffect", "oEffect", "xIntent", "xWant", "oWant", "xNeed", "xReact" , "oReact"]:
+    paths={
+        split: os.path.join(
+            "/drive3/pouramini/data/atomic/en_fa/", f"{rel}_{split}.tsv"
+        )
+        for split in ["train","validation"]
+    }
+    num_lines =  {split: sum(1 for line in open(path)) for split,path in paths.items()}
+    t5.data.TaskRegistry.add(
+        f"enfa_{rel}_task",
+        # Specify the task type.
+        core.TvsTask,
+        # Supply a function which returns a tf.data.Dataset.
+        split_to_filepattern=paths,
+        num_input_examples=num_lines,
+        text_preprocessor=[preprocessors.tsv_rel_preprocessor('en2fa')],
+        # Lowercase targets before computing metrics.
+        # postprocess_fn=t5.data.postprocessors.lower_text,
+        # output_features=DEFAULT_OUTPUT_FEATURES
+        # We'll use accuracy as our evaluation metric.
+        metric_fns=[t5.evaluation.metrics.accuracy],
+        # Not required, but helps for mixing and auto-caching.
+        # num_input_examples=num_atomic_examples
+        output_features=MT5_OUTPUT_FEATURES #if lang == "per" else None
+    )
+
 # Create tasks for the datasets.
 t5.data.TaskRegistry.add(
     "eng_task",
@@ -57,6 +83,29 @@ t5.data.TaskRegistry.add(
     output_features=MT5_OUTPUT_FEATURES
 )
 
+# Create tasks for the datasets.
+t5.data.TaskRegistry.add(
+    "en_fa_task",
+    # Specify the task type.
+    core.TvsTask,
+    # Supply a function which returns a tf.data.Dataset.
+    split_to_filepattern={
+        split: os.path.join(
+            "/drive3/pouramini/data/atomic/en_fa/", "en_fa_train.tsv"
+        )
+        for split in ["train", "validation"]
+    },
+    num_input_examples={"train": 74206, "validation": 74206},
+    text_preprocessor=[preprocessors.tvs_preprocessor],
+    # Lowercase targets before computing metrics.
+    # postprocess_fn=t5.data.postprocessors.lower_text,
+    # output_features=DEFAULT_OUTPUT_FEATURES
+    # We'll use accuracy as our evaluation metric.
+    metric_fns=[t5.evaluation.metrics.accuracy],
+    # Not required, but helps for mixing and auto-caching.
+    # num_input_examples=num_atomic_examples
+    output_features=MT5_OUTPUT_FEATURES
+)
 # Create tasks for the datasets.
 t5.data.TaskRegistry.add(
     "per_task",

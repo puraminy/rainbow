@@ -96,6 +96,27 @@ def remove_tags(text):
     # text = tf.strings.regex_replace(text,"<", "[")
     return text
 
+def normalize_text(text):
+    """Lowercase and remove quotes and tags from a TensorFlow string."""
+    text = tf.strings.lower(text)
+    text = tf.strings.regex_replace(text, "'(.*)'", r"\1")
+    text = tf.strings.regex_replace(text, "<[^>]+>", " ")
+    return text
+
+def tsv_rel_preprocessor(lang="e2e"):
+    def rel_preprocessor(ds):
+        def to_inputs_and_targets(ex):
+            return {
+                "inputs": tf.strings.join(
+                    [lang + " " + ex["prefix"] + ":", ex["input_text"]]
+                ),
+                "targets": ex["target_text"],
+            }
+
+        return ds.map(
+            to_inputs_and_targets, num_parallel_calls=tf.data.experimental.AUTOTUNE
+        )
+    return rel_preprocessor
 
 def tvs_preprocessor(ds):
     def to_inputs_and_targets(ex):
@@ -110,13 +131,22 @@ def tvs_preprocessor(ds):
         to_inputs_and_targets, num_parallel_calls=tf.data.experimental.AUTOTUNE
     )
 
-
-def normalize_text(text):
-    """Lowercase and remove quotes and tags from a TensorFlow string."""
-    text = tf.strings.lower(text)
-    text = tf.strings.regex_replace(text, "'(.*)'", r"\1")
-    text = tf.strings.regex_replace(text, "<[^>]+>", " ")
+def unicode_encode(text):
+    text = tf.strings.unicode_encode(text,"UTF-8")
     return text
+
+def tvs_unicode_preprocessor(ds):
+    def to_inputs_and_targets(ex):
+        return {
+            "inputs": tf.strings.join(
+                ["atomic: ", unicode_encode(ex["input_text"])]
+            ),
+            "targets": unicode_encode(ex["target_text"]),
+        }
+
+    return ds.map(
+        to_inputs_and_targets, num_parallel_calls=tf.data.experimental.AUTOTUNE
+    )
 
 
 def rt_preprocessor(ds):

@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
     ),
 )
 @click.option(
-    "--checkpoint-steps",
+    "--step",
     type=str,
     default="-1",
     help=(
@@ -67,27 +67,33 @@ logger = logging.getLogger(__name__)
     default=8,
     help="The degree of model parallelism to use. Defaults to 8.",
 )
+@click.option(
+    "--split",
+    default="validation",
+    type=str,
+    help="The split that evaluation is performed on."
+)
 def evaluate(
     mixture: str,
     model_dir: str,
     summary_dir: str,
     split: str,
     batch_size: int,
-    checkpoint_steps,
+    step,
     model_parallelism: int,
 ) -> None:
     """Evaluate the model located at RESULTS_DIR on MIXTURE."""
     utils.configure_logging(clear=True)
     if not summary_dir:
-        summary_dir = os.path.join(model_dir, "validation")
+        summary_dir = os.path.join(model_dir, split)
     if not mixture:
         mixture = Path(model_dir).stem
 
     tf.io.gfile.makedirs(summary_dir)
-    if checkpoint_steps == "-1":
-        checkpoint_steps = -1
-    elif checkpoint_steps.isdigit():
-        checkpoint_steps = int(checkpoint_steps)
+    if step == "-1":
+        step = -1
+    elif step.isdigit():
+        step = int(step)
     # Validate arguments.
 
     #    if not results_dir.startswith("gs://"):
@@ -110,13 +116,17 @@ def evaluate(
         keep_checkpoint_max=None,
         iterations_per_loop=100,
     )
-    model.eval(
-        mixture_or_task_name=mixture,
-        summary_dir=summary_dir,
-        checkpoint_steps=checkpoint_steps,
-        split=split,
-    )
-
+    for split in ["validation"]: #["e2e","e2p","p2e","p2p"]:
+        split_dir = os.path.join(model_dir, summary_dir, split)
+        if True: #not os.path.isdir(split_dir):
+            tf.io.gfile.makedirs(split_dir)
+            print("=====================", split_dir, "=========================")
+            model.eval(
+                mixture_or_task_name=mixture,
+                summary_dir=split_dir,
+                checkpoint_steps=step,
+                split=split,
+            )
 
 if __name__ == "__main__":
     evaluate()  # pylint: disable=no-value-for-parameter

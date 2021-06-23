@@ -1,7 +1,7 @@
 """Core classes and functions used throughout rainbow."""
 
 from typing import Callable, Dict, List, Optional, Sequence, Union
-
+import functools
 import t5
 import tensorflow as tf
 
@@ -59,7 +59,7 @@ class TvsTask(t5.data.Task):
             ds = ds.map(
                 functools.partial(
                     tf.io.decode_csv,
-                    record_defaults=["", ""],
+                    record_defaults=["", "", ""],
                     field_delim="\t",
                     use_quote_delim=False,
                 ),
@@ -67,7 +67,8 @@ class TvsTask(t5.data.Task):
             )
             # Map each tuple to a {"question": ... "answer": ...} dict.
             ds = ds.map(
-                lambda *ex: dict(zip(["input_text", "target_text"], ex))
+                lambda *ex: dict(zip(["prefix", "input_text", "target_text"], ex))
+                #functools.partial(to_inputs_and_targets, ex))
             )
             if truncate_to is not None and split == "train":
                 ds = ds.shuffle(
