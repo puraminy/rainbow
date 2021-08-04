@@ -4,10 +4,28 @@
 
 import t5
 
-import rainbow
+import rainbow.mytask
 # N.B. This script must import rainbow to register the tasks.
+import click
 
-all_tasks = t5.data.utils.TaskRegistry.names()
+@click.command()
+@click.option(
+    "--filt",
+    type=str,
+    default="",
+)
+def list_tasks(filt: str):
 
-print(f'Listing {len(all_tasks)} tasks:\n')
-print('  ' + '\n  '.join(sorted(all_tasks)) + '\n')
+    all_tasks = t5.data.TaskRegistry.names()
+    print(f'Listing {len(all_tasks)} tasks:\n')
+    print('  ' + '\n  '.join(sorted(all_tasks)) + '\n')
+    if filt:
+        my_tasks = [m for m in all_tasks if filt in m]
+        print(f'Selected: {len(my_tasks)} tasks:\n')
+        print('  ' + '\n  '.join(sorted(my_tasks)) + '\n')
+
+
+
+if __name__ == "__main__":
+    list_tasks()
+

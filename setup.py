@@ -25,7 +25,7 @@ setup(
         'Topic :: Scientific/Engineering :: Artificial Intelligence'
     ],
     license='Apache',
-    packages=['rainbow'],
+    packages= ['rainbow','rainbow.preparation'],
     package_dir={'': 'src'},
     scripts=[],
     install_requires=[],

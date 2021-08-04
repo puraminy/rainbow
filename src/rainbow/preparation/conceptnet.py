@@ -142,10 +142,10 @@ class ConceptNetPreparer(preparer.Preparer):
                                     "index": rows_written,
                                     "inputs": (
                                         f"[{self.CONCEPTNET['name']}]:\n"
-                                        f"<subject>{row_in[1]}</subject>\n"
-                                        f"<relation>{row_in[0]}</relation>"
+                                        f"[subject]{row_in[1]}[/subject]\n"
+                                        f"[relation]{row_in[0]}[/relation]"
                                     ),
-                                    "targets": f"<object>{row_in[2]}</object>",
+                                    "targets": f"[object]{row_in[2]}[/object]",
                                 }
 
                                 # create an example of KB completion in the
@@ -155,10 +155,10 @@ class ConceptNetPreparer(preparer.Preparer):
                                     "index": rows_written + 1,
                                     "inputs": (
                                         f"[{self.CONCEPTNET['name']}]:\n"
-                                        f"<object>{row_in[2]}</object>\n"
-                                        f"<relation>{row_in[0]}</relation>"
+                                        f"[object]{row_in[2]}[/object]\n"
+                                        f"[relation]{row_in[0]}[/relation]"
                                     ),
-                                    "targets": f"<subject>{row_in[1]}</subject>",
+                                    "targets": f"[subject]{row_in[1]}[/subject]",
                                 }
 
                                 if i == 0:
