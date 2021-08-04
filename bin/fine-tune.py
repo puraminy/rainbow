@@ -20,6 +20,7 @@ tf.get_logger().setLevel("ERROR")
 # and available for training.
 
 BASE_DIR = "/drive2/"
+DATA_DIR = "data"
 T5_DEFAULT_SPM_PATH = os.path.join(
     BASE_DIR, "pretrained/t5/sentencepiece.model"
 )
@@ -93,8 +94,8 @@ PRETRAINED_MODELS = {
 @click.option(
     "--pm",
     type=str,
-    default="mt5_small",
-    help="The path to or name of the pretrained model. Defaults to 3B.",
+    default="t5_small",
+    help="The path to or name of the pretrained model. ",
 )
 @click.option(
     "--n-steps",
@@ -174,8 +175,10 @@ def fine_tune(
     ds_fname
 ) -> None:
     if not do_train and not do_eval and not info:
-        print("Specify train or evaluation flag.")
+        print("Specify train or evaluation flag. --do_train or --do_eval")
         return
+    if not Path(model_dir).exists():
+        Path(model_dir).mkdir(parents=True, exist_ok=True)
     if do_train and any(os.scandir(model_dir)):
         temp = glob.glob("model.ckpt*")
         if len(temp) == 0:
@@ -202,10 +205,10 @@ def fine_tune(
         task_names.append(task_name)
         print("Task:", task_name)
         paths={}
-        paths["src"] = os.path.join( "/drive3/pouramini/data/atomic/en_fa/", f"{rel}_en_fa_de_train_no_dups.tsv")
+        paths["src"] = os.path.join(DATA_DIR, f"atomic_train.tsv")
 
         sel_cols = ["prefix", input_col, target_col]
-        df = pd.read_table(paths["src"], index_col =0)
+        df = pd.read_table(paths["src"])
         if not "prefix" in df:
             raise Exception(f"prefix is not in dataframe")
         if not input_col in df:
@@ -259,7 +262,7 @@ def fine_tune(
             metric_fns=[t5.evaluation.metrics.accuracy],
             # Not required, but helps for mixing and auto-caching.
             # num_input_examples=num_atomic_examples
-            output_features=MT5_OUTPUT_FEATURES # if pm.startswith("t5") == "" else T5_OUTPUT_FEATURES
+            output_features=MT5_OUTPUT_FEATURES  if pm.startswith("mt5") else None
         )
 
 
