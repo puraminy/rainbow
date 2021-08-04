@@ -20,7 +20,7 @@ tf.get_logger().setLevel("ERROR")
 # and available for training.
 
 BASE_DIR = "/drive2/"
-DATA_DIR = "data"
+DATA_DIR = "."
 T5_DEFAULT_SPM_PATH = os.path.join(
     BASE_DIR, "pretrained/t5/sentencepiece.model"
 )
