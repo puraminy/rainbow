@@ -7,7 +7,7 @@ import t5
 import rainbow
 # N.B. This script must import rainbow to register the mixtures.
 
-import rainbow.mixtures
+import rainbow.mytask
 # N.B. We must import rainbow.mixtures here so that the mixtures are registered
 # and available for training.
 import click

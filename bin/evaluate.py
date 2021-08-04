@@ -3,6 +3,7 @@
 """Evaluate the model on the rainbow datasets."""
 import os
 import logging
+import shutil
 
 import click
 import t5
@@ -10,7 +11,7 @@ import tensorflow as tf
 
 from rainbow import utils
 from pathlib import Path
-import rainbow.mixtures
+import rainbow.mytask
 
 # N.B. We must import rainbow.mixtures here so that the mixtures are registered
 # and available for evaluation.
@@ -21,15 +22,12 @@ logger = logging.getLogger(__name__)
 
 
 @click.command()
-# @click.argument("mixture", type=str)
+@click.argument("mixture", type=str)
 @click.option(
     "--model-dir",
     envvar="PWD",
     #    multiple=True,
     type=click.Path(),
-)
-@click.option(
-    "--mixture", type=str, default="", help="The mixture name",
 )
 @click.option(
     "--summary-dir",
@@ -116,15 +114,22 @@ def evaluate(
         keep_checkpoint_max=None,
         iterations_per_loop=100,
     )
-    for split in ["validation"]: #["e2e","e2p","p2e","p2p"]:
+    for split in ["en_train","de_train"]: #["e2e","e2p","p2e","p2p"]:
         split_dir = os.path.join(model_dir, summary_dir, split)
+        #split_dir = summary_dir
         if True: #not os.path.isdir(split_dir):
             tf.io.gfile.makedirs(split_dir)
             print("=====================", split_dir, "=========================")
+            tasks = t5.data.get_subtasks(
+                t5.data.get_mixture_or_task(mixture))
+            task = tasks[0]
+            ref_file = task.split_paths["src"]
+            shutil.copy(ref_file, split_dir + "/src_df.tsv")
             model.eval(
                 mixture_or_task_name=mixture,
                 summary_dir=split_dir,
                 checkpoint_steps=step,
+                #eval_with_score=True,
                 split=split,
             )
 

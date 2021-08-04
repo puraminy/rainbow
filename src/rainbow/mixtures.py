@@ -83,7 +83,20 @@ for dataset in datasets.COMMONSENSE_DATASETS.values():
         t5.data.MixtureRegistry.add(
             f"{base_name}_mixture", [f"{base_name}_task"], default_rate=1.0
         )
-
+rels = ["xAttr", "xEffect", "oEffect", "xIntent", "xWant", "oWant", "xNeed", "xReact" , "oReact"]
+rels = ["xIntent"]
+sel_langs = ["fa"]
+slangs = "newexp_" + "".join(sel_langs)
+for lang in sel_langs:
+    for natural in ["_natural"]:
+        for rel in rels: 
+            t5.data.MixtureRegistry.add(
+                f"{slangs}_{rel}{natural}_mixture",
+                [
+                    f"newexp_{lang}2en_{rel}{natural}_task", f"newexp_en2en_{rel}{natural}_task"
+                ],
+                default_rate=1.0 #rates.proportional_rate,
+            )
 ## My task
 for lang in ["e2e", "e2p", "p2e", "p2p"]:
     t5.data.MixtureRegistry.add(

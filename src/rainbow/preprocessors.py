@@ -103,16 +103,17 @@ def normalize_text(text):
     text = tf.strings.regex_replace(text, "<[^>]+>", " ")
     return text
 
-def tsv_rel_preprocessor(lang="e2e"):
+def tsv_rel_preprocessor(input_prefix, input_postfix, target_prefix, target_postfix, input_col="input_text", target_col="target_text"):
     def rel_preprocessor(ds):
         def to_inputs_and_targets(ex):
             return {
                 "inputs": tf.strings.join(
-                    [lang + " " + ex["prefix"] + ":", ex["input_text"]]
+                    [input_prefix, ex[input_col], input_postfix]
                 ),
-                "targets": ex["target_text"],
+                "targets": tf.strings.join(
+                    [target_prefix, ex[target_col], target_postfix]
+                )
             }
-
         return ds.map(
             to_inputs_and_targets, num_parallel_calls=tf.data.experimental.AUTOTUNE
         )

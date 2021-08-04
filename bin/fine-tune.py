@@ -4,21 +4,49 @@
 
 import logging
 import os
+import shutil
 import click
 import t5
+import glob
 import tensorflow as tf
 import tensorflow_datasets as tfds
 import sys
-from rainbow import utils, settings
-
-import rainbow.mixtures
+from rainbow import utils, settings, core, rates, preprocessors
+import pandas as pd
+from pathlib import Path
 
 tf.get_logger().setLevel("ERROR")
 # N.B. We must import rainbow.mixtures here so that the mixtures are registered
 # and available for training.
 
-logger = logging.getLogger(__name__)
 BASE_DIR = "/drive2/"
+T5_DEFAULT_SPM_PATH = os.path.join(
+    BASE_DIR, "pretrained/t5/sentencepiece.model"
+)
+MT5_DEFAULT_SPM_PATH = os.path.join(
+    BASE_DIR, "pretrained/mt5/sentencepiece.model"
+)
+
+
+T5_DEFAULT_VOCAB = t5.data.SentencePieceVocabulary(T5_DEFAULT_SPM_PATH)
+MT5_DEFAULT_VOCAB = t5.data.SentencePieceVocabulary(MT5_DEFAULT_SPM_PATH)
+MT5_OUTPUT_FEATURES = {
+    "inputs": t5.data.Feature(
+        vocabulary=MT5_DEFAULT_VOCAB, add_eos=True, required=False
+    ),
+    "targets": t5.data.Feature(vocabulary=MT5_DEFAULT_VOCAB, add_eos=True),
+}
+
+T5_OUTPUT_FEATURES = {
+    "inputs": t5.data.Feature(
+        vocabulary=T5_DEFAULT_VOCAB, add_eos=True
+    ),
+    "targets": t5.data.Feature(
+        vocabulary=T5_DEFAULT_VOCAB, add_eos=True
+    ),
+}
+
+logger = logging.getLogger(__name__)
 PRETRAINED_MODELS = {
     "t5_small": os.path.join(BASE_DIR, "pretrained/t5/small"),
     "t5_large": os.path.join(BASE_DIR, "pretrained/t5/large"),
@@ -30,27 +58,55 @@ PRETRAINED_MODELS = {
     "mt5_large": os.path.join(BASE_DIR, "pretrained/mt5/large"),
 }
 
-
 @click.command()
-@click.argument("mixture", type=str)
-# @click.argument("results_dir", type=str)
+@click.argument("input_cols", type=str)
 @click.option(
-    "--split",
+    "--target_col",
+    default="target_text",
     type=str,
-    default="train",
-    help="The split on which to train. Defaults to 'train'.",
+    help=""
+)
+@click.option(
+    "--rel",
+    default="xIntent",
+    type=str,
+    help="The relation between input and target"
+)
+@click.option(
+    "--model-dir",
+    envvar="PWD",
+    #    multiple=True,
+    type=click.Path(),
+)
+@click.option(
+    "--do_train",
+    "-t",
+    is_flag=True,
+    help=""
+)
+@click.option(
+    "--do_eval",
+    "-v",
+    is_flag=True,
+    help=""
 )
 @click.option(
     "--pm",
     type=str,
-    default="t5_small",
+    default="mt5_small",
     help="The path to or name of the pretrained model. Defaults to 3B.",
 )
 @click.option(
     "--n-steps",
     type=int,
-    default=25000,
+    default=110000,
     help="The number of gradient updates. Defaults to 25,000.",
+)
+@click.option(
+    "--eval-step",
+    default=-1,
+    type=int,
+    help="Step for evaluaiton, defaults to last checkpoint"
 )
 @click.option(
     "--learning-rate",
@@ -69,8 +125,9 @@ PRETRAINED_MODELS = {
 )
 @click.option(
     "--save-checkpoints-steps",
+    "-s",
     type=int,
-    default=15000,
+    default=5000,
     help=(
         "The number of steps to take before saving a checkpoint. Defaults to"
         " 5000."
@@ -78,27 +135,143 @@ PRETRAINED_MODELS = {
 )
 @click.option(
     "--n-checkpoints-to-keep",
+    "-n",
     type=int,
-    default=3,
+    default=2,
     help=(
         "The number of checkpoints to keep during fine-tuning. Defaults"
         " to 4."
     ),
 )
-# def cli()
-#   pass
+@click.option(
+    "--info",
+    "-i",
+    is_flag=True,
+    help="Get info from training dataset"
+)
+@click.option(
+    "--ds_fname",
+    default="train",
+    type=str,
+    help=""
+)
 def fine_tune(
-    mixture: str,
-    #    results_dir: str,
-    split: str,
+    input_cols: str,
+    target_col: str,
+    rel:str ,
+    model_dir: str,
+    do_train,
+    do_eval,
     pm: str,
     n_steps: int,
+    eval_step: int,
     learning_rate: float,
     extra: str,
     bs: int,
     save_checkpoints_steps: int,
     n_checkpoints_to_keep: int,
+    info,
+    ds_fname
 ) -> None:
+    if not do_train and not do_eval and not info:
+        print("Specify train or evaluation flag.")
+        return
+    if do_train and any(os.scandir(model_dir)):
+        temp = glob.glob("model.ckpt*")
+        if len(temp) == 0:
+            print("The folder must contain a checkpoint or be empty!")
+            return
+
+    task_names = []
+    input_prefix = input_postfix = target_prefix = target_postfix = ""
+    for input_col in input_cols.split(","):
+        input_col = input_col.strip()
+        if ":" in input_col:
+            input_prefix, input_col, input_postfix = input_col.split(":")
+            if input_prefix and not input_prefix.endswith(" "):
+                input_prefix += " "
+            if input_postfix and not input_postfix.startswith(" "):
+                input_postfix = " " + input_postfix
+        if ":" in target_col:
+            target_prefix, target_col, target_postfix = target_col.split(":")
+            if target_prefix and not target_prefix.endswith(" "):
+                target_prefix += " "
+            if target_postfix and not target_postfix.startswith(" "):
+                target_postfix = " " + target_postfix
+        task_name  = input_col + "_" + target_col
+        task_names.append(task_name)
+        print("Task:", task_name)
+        paths={}
+        paths["src"] = os.path.join( "/drive3/pouramini/data/atomic/en_fa/", f"{rel}_en_fa_de_train_no_dups.tsv")
+
+        sel_cols = ["prefix", input_col, target_col]
+        df = pd.read_table(paths["src"], index_col =0)
+        if not "prefix" in df:
+            raise Exception(f"prefix is not in dataframe")
+        if not input_col in df:
+            raise Exception(f"{input_col} is not in dataframe")
+        if not target_col in df:
+            raise Exception(f"{target_col} is not in dataframe")
+        if info:
+            for col in df.columns:
+                print(col)
+            print(df[[input_col, target_col]].head())
+            input_file = open(ds_fname + "." + input_col, "w")
+            target_file = open(ds_fname + "." + target_col, "w")
+            for idx, row in df.iterrows():
+                print(input_prefix + str(row[input_col]) + input_postfix, file=input_file)
+                print(target_prefix + str(row[target_col]) + target_postfix, file=target_file)
+            input_file.close()
+            target_file.close()
+            return
+
+        new_df = df[sel_cols]
+        new_df.columns = ["prefix", "input_text", "target_text"]
+        data_folder = os.path.join(model_dir, "data")
+        Path(data_folder).mkdir(parents=True, exist_ok=True)
+        p = data_folder + f"/{rel}_{input_col}_train.tsv"
+    #
+        new_df.to_csv(p, sep="\t", index = False)
+        if do_train:
+            split = "train"
+        else:
+            split = input_col
+        paths[split] = p
+        print(p)
+        exp = Path(model_dir).stem
+        print("Exp lable:", exp)
+        num_lines =  {split: sum(1 for line in open(path)) for split,path in paths.items()}
+
+        t5.data.TaskRegistry.add(
+            task_name,
+            # Specify the task type.
+            core.MyTsvTask,
+            #record_defaults = ["", "", ""],
+            # Supply a function which returns a tf.data.Dataset.
+            sel_cols=sel_cols,
+            split_to_filepattern=paths,
+            num_input_examples=num_lines,
+            text_preprocessor=[preprocessors.tsv_rel_preprocessor(input_prefix, input_postfix, target_prefix, target_postfix)],
+            # Lowercase targets before computing metrics.
+            # postprocess_fn=t5.data.postprocessors.lower_text,
+            # output_features=DEFAULT_OUTPUT_FEATURES
+            # We'll use accuracy as our evaluation metric.
+            metric_fns=[t5.evaluation.metrics.accuracy],
+            # Not required, but helps for mixing and auto-caching.
+            # num_input_examples=num_atomic_examples
+            output_features=MT5_OUTPUT_FEATURES # if pm.startswith("t5") == "" else T5_OUTPUT_FEATURES
+        )
+
+
+    mixture = "_".join(task_names)
+    print("Mixture:", mixture, ":", task_names)
+    t5.data.MixtureRegistry.add(
+        mixture,
+        task_names,
+        default_rate=1.0 #rates.proportional_rate,
+    )
+
+
     """Fine-tune the model on MIXTURE, writing results to RESULTS_DIR."""
     if not pm in PRETRAINED_MODELS:
         raise ValueError(pm + " path isn't introduced in PRETRAINED_MODELS")
@@ -121,7 +294,7 @@ def fine_tune(
             settings.BASE_DIR, "models/rb", pm, extra + "/" + mixture
         )
     else:
-        results_dir = os.path.join(settings.BASE_DIR, "models/rb", pm, mixture)
+        results_dir = os.path.join(settings.BASE_DIR, "models/rb", pm, task_name)
 
     MODEL_TYPE = pm.split("_")[0]
 
@@ -136,14 +309,13 @@ def fine_tune(
 #    for ex in tfds.as_numpy(ds.take(5)):
 #        tf.print(ex)
 #    # Process arguments.
-    print("=====================================================")
     pm = PRETRAINED_MODELS[pm]
 
     # Run fine-tuning.
 
     model = t5.models.MtfModel(
         tpu=None,
-        model_dir=results_dir,
+        model_dir=model_dir,
         model_parallelism=8,
         batch_size=batch_size,
         sequence_length={"inputs": 128, "targets": 128},
@@ -154,28 +326,49 @@ def fine_tune(
         keep_checkpoint_max=n_checkpoints_to_keep,
         iterations_per_loop=100,
     )
+    if do_train:
+        print("============================ Training =========================")
+        try:
+            model.finetune(
+                mixture_or_task_name=mixture,
+                pretrained_model_dir=pm,
+                finetune_steps=n_steps,
+                split=split,
+            )
+        except KeyboardInterrupt:
+            print("Saving model")
 
-    model.finetune(
-        mixture_or_task_name=mixture,
-        pretrained_model_dir=pm,
-        finetune_steps=n_steps,
-        split=split,
-    )
-    export_dir = os.path.join(results_dir, "export")
-    task_vocab = t5.models.utils.get_vocabulary(mixture)
+        export_dir = os.path.join(results_dir, "export")
+        task_vocab = t5.models.utils.get_vocabulary(mixture)
 
-    model.batch_size = 1  # make one prediction per call
-    saved_model_path = model.export(
-        export_dir,
-        checkpoint_step=-1,  # use most recent
-        beam_size=1,  # no beam search
-        vocabulary=task_vocab,
-        temperature=1.0,  # sample according to predicted distribution
-    )
-    print("cd ", results_dir, "")
+        model.batch_size = 1  # make one prediction per call
+        saved_model_path = model.export(
+            export_dir,
+            checkpoint_step=-1,  # use most recent
+            beam_size=1,  # no beam search
+            vocabulary=task_vocab,
+            temperature=1.0,  # sample according to predicted distribution
+        )
+        print("cd ", results_dir, "")
 
+    if do_eval:
+        print("============================ Validating =========================")
+        summary_dir = "validation"
+        split = input_col
+        split_dir = os.path.join(model_dir, summary_dir, split)
+        #split_dir = summary_dir
+        if True: #not os.path.isdir(split_dir):
+            tf.io.gfile.makedirs(split_dir)
+            print("=====================", split_dir, "=========================")
+            ref_file = paths["src"]
+            shutil.copy(ref_file, split_dir + "/src_df.tsv")
+            model.eval(
+                mixture_or_task_name=mixture,
+                summary_dir=split_dir,
+                checkpoint_steps=eval_step,
+                #eval_with_score=True,
+                split=split,
+            )
 
-mixture = "t5_atomic_backward_mixture"  # @param {type:"string"}
 if __name__ == "__main__":
     fine_tune()
-    # fine_tune(mixture, "train", "t5_small", 25000, 0.003, 8, 1, 5000, 2)
