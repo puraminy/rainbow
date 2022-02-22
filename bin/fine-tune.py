@@ -6,7 +6,7 @@ import logging
 import os
 import shutil
 import click
-import t5
+import t5.models
 import glob
 import tensorflow as tf
 import tensorflow_datasets as tfds
@@ -19,13 +19,13 @@ tf.get_logger().setLevel("ERROR")
 # N.B. We must import rainbow.mixtures here so that the mixtures are registered
 # and available for training.
 
-BASE_DIR = "/drive2/"
-DATA_DIR = "."
+BASE_DIR = "/home/pouramini/"
+DATA_DIR = "/home/pouramini/atomic"
 T5_DEFAULT_SPM_PATH = os.path.join(
-    BASE_DIR, "pretrained/t5/sentencepiece.model"
+    BASE_DIR, "pret/t5/sentencepiece.model"
 )
 MT5_DEFAULT_SPM_PATH = os.path.join(
-    BASE_DIR, "pretrained/mt5/sentencepiece.model"
+    BASE_DIR, "pret/mt5/sentencepiece.model"
 )
 
 
@@ -49,18 +49,25 @@ T5_OUTPUT_FEATURES = {
 
 logger = logging.getLogger(__name__)
 PRETRAINED_MODELS = {
-    "t5_small": os.path.join(BASE_DIR, "pretrained/t5/small"),
-    "t5_large": os.path.join(BASE_DIR, "pretrained/t5/large"),
-    "mt5_small": os.path.join(BASE_DIR, "pretrained/mt5/small"),
-    "mt5_base": os.path.join(BASE_DIR, "pretrained/mt5/base"),
-    "mt5_sa2": os.path.join(BASE_DIR, "pretrained/mt5/small_atomic_2"),
-    "mt5_ba2": os.path.join(BASE_DIR, "pretrained/mt5/base_atomic_2"),
-    "mt5_snaa": os.path.join(BASE_DIR, "pretrained/mt5/small_natural_all_atomic"),
-    "mt5_large": os.path.join(BASE_DIR, "pretrained/mt5/large"),
+    "t5_small": os.path.join(BASE_DIR, "pret/t5/small"),
+    "t5_base": os.path.join(BASE_DIR, "pret/t5/base"),
+    "t5_large": os.path.join(BASE_DIR, "pret/t5/large"),
+    "mt5_small": os.path.join(BASE_DIR, "pret/mt5/small"),
+    "mt5_base": os.path.join(BASE_DIR, "pret/mt5/base"),
+    "mt5_sa2": os.path.join(BASE_DIR, "pret/mt5/small_atomic_2"),
+    "mt5_ba2": os.path.join(BASE_DIR, "pret/mt5/base_atomic_2"),
+    "mt5_snaa": os.path.join(BASE_DIR, "pret/mt5/small_natural_all_atomic"),
+    "mt5_large": os.path.join(BASE_DIR, "pret/mt5/large"),
 }
 
 @click.command()
-@click.argument("input_cols", type=str)
+@click.option(
+    "--input_cols",
+    "-ic",
+    default="input_text",
+    type=str,
+    help=""
+)
 @click.option(
     "--target_col",
     default="target_text",
@@ -94,13 +101,13 @@ PRETRAINED_MODELS = {
 @click.option(
     "--pm",
     type=str,
-    default="t5_small",
-    help="The path to or name of the pretrained model. ",
+    default="t5_base",
+    help="The path to or name of the pret model. ",
 )
 @click.option(
     "--n-steps",
     type=int,
-    default=110000,
+    default=5000,
     help="The number of gradient updates. Defaults to 25,000.",
 )
 @click.option(
@@ -205,7 +212,7 @@ def fine_tune(
         task_names.append(task_name)
         print("Task:", task_name)
         paths={}
-        paths["src"] = os.path.join(DATA_DIR, f"atomic_train.tsv")
+        paths["src"] = os.path.join(DATA_DIR, f"train.tsv")
 
         sel_cols = ["prefix", input_col, target_col]
         df = pd.read_table(paths["src"])

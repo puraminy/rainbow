@@ -7,10 +7,12 @@ src/rainbow/__init__.py
 src/rainbow/core.py
 src/rainbow/datasets.py
 src/rainbow/mixtures.py
+src/rainbow/mytask.py
+src/rainbow/mytask2.py
+src/rainbow/old_tasks.py
 src/rainbow/preprocessors.py
 src/rainbow/rates.py
 src/rainbow/settings.py
-src/rainbow/tasks.py
 src/rainbow/utils.py
 src/rainbow.egg-info/PKG-INFO
 src/rainbow.egg-info/SOURCES.txt

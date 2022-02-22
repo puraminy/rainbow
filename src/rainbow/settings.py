@@ -8,23 +8,23 @@ import t5
 
 # dataset preprocessing
 
-PREPROCESSED_SPLIT_FILE_NAME_TEMPLATE = "{split}.{dataset}.csv"
+#PREPROCESSED_SPLIT_FILE_NAME_TEMPLATE = "{split}.{dataset}.csv"
 """The file name template for the preprocessed splits."""
 
-BASE_DIR = os.environ["BASE_DIR"]
-DATASETS_DIR = os.path.join(BASE_DIR, "data/rb/ds")
+BASE_DIR = "/home/pouramini/"
+#DATASETS_DIR = os.path.join(BASE_DIR, "data/rb/ds")
 """The directory storing the rainbow datasets."""
 
-PREPROCESSED_DATASETS_DIR = os.path.join(BASE_DIR, "data/rb/prepds/")
+#PREPROCESSED_DATASETS_DIR = os.path.join(BASE_DIR, "data/rb/prepds/")
 """The directory containing preprocessed splits for the rainbow datasets."""
 
 
 # tensorflow datasets configuration
 
-TFDS_DATASETS_DIR = os.path.join(BASE_DIR, "data/rb/tfds")
+#TFDS_DATASETS_DIR = os.path.join(BASE_DIR, "data/rb/tfds")
 """The directory for storing the TFDS datasets."""
 # Configure T5 to use TFDS_DATASETS_DIR.
-t5.data.set_tfds_data_dir_override(TFDS_DATASETS_DIR)
+#t5.data.set_tfds_data_dir_override(TFDS_DATASETS_DIR)
 
 
 # learning curve experiments
