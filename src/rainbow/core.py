@@ -40,6 +40,7 @@ class MyTsvTask(t5.data.Task):
         self,
         name: str,
         sel_cols: List,
+        myds, 
         split_to_filepattern: Dict[str, str],
         num_input_examples: Dict[str, int],
         text_preprocessor: Union[Callable, Sequence[Callable]],
@@ -50,8 +51,12 @@ class MyTsvTask(t5.data.Task):
         self.split_paths = split_to_filepattern
         self.exampes_nums = num_input_examples
         self.sel_cols = sel_cols,
+        self.myds = myds
 
         def dataset_fn(split, shuffle_files=False):
+            return self.myds[split]
+
+        def dataset_fn_tf(split, shuffle_files=False):
             # We only have one file for each split.
             del shuffle_files
 

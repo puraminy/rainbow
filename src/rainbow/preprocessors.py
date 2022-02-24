@@ -3,8 +3,7 @@
 from typing import Callable, Optional, Sequence
 
 import tensorflow as tf
-
-
+from comet.train.common import *
 def make_add_field_names_preprocessor(
     field_names: Sequence[str],
     field_indices: Optional[Sequence[int]] = None,
@@ -102,6 +101,28 @@ def normalize_text(text):
     text = tf.strings.regex_replace(text, "'(.*)'", r"\1")
     text = tf.strings.regex_replace(text, "<[^>]+>", " ")
     return text
+
+def tsv_atomic(mt):
+    def rel_preprocessor(ds):
+        def to_inputs_and_targets(ex):
+            rel = ex["prefix"]
+            event = ex["input_text"]
+            resp = ex["target_text"]
+            qtemp, anstemp, ex_qtemp, ex_anstemp, context = create_templates(mt)
+            qtemp = tf.convert_to_tensor(qtemp, dtype=tf.string) 
+            anstemp = tf.convert_to_tensor(anstemp, dtype=tf.string) 
+            query = tf.strings.regex_replace(event, "\{event\}", event)
+            query = tf.strings.regex_replace(resp, "\{ph\}", "<extra_id_0>")
+            response = tf.strings.regex_replace(anstemp, "\{resp\}", resp)
+            response = tf.strings.regex_replace(response, "\{ph\}", "<extra_id_0>")
+            return {
+                "inputs": query,
+                "targets":response 
+                }
+        return ds.map(
+            to_inputs_and_targets, num_parallel_calls=tf.data.experimental.AUTOTUNE
+        )
+    return rel_preprocessor
 
 def tsv_rel_preprocessor(input_prefix, input_postfix, target_prefix, target_postfix, input_col="input_text", target_col="target_text"):
     def rel_preprocessor(ds):

@@ -11,9 +11,11 @@ import glob
 import tensorflow as tf
 import tensorflow_datasets as tfds
 import sys
+from comet.train.common import *
 from rainbow import utils, settings, core, rates, preprocessors
 import pandas as pd
 from pathlib import Path
+from datasets import Dataset
 
 tf.get_logger().setLevel("ERROR")
 # N.B. We must import rainbow.mixtures here so that the mixtures are registered
@@ -62,9 +64,9 @@ PRETRAINED_MODELS = {
 
 @click.command()
 @click.option(
-    "--input_cols",
-    "-ic",
-    default="input_text",
+    "--methods",
+    "-mt",
+    default="sup",
     type=str,
     help=""
 )
@@ -106,6 +108,7 @@ PRETRAINED_MODELS = {
 )
 @click.option(
     "--n-steps",
+    "-ns",
     type=int,
     default=5000,
     help="The number of gradient updates. Defaults to 25,000.",
@@ -163,8 +166,43 @@ PRETRAINED_MODELS = {
     type=str,
     help=""
 )
+@click.option(
+    "--split",
+    "-sp",
+    default="train",
+    type=str,
+    help=""
+)
+@click.option(
+    "--train_samples",
+    "-n",
+    default=0,
+    type=int,
+    help=""
+)
+@click.option(
+    "--test_set",
+    "-ts",
+    default="test",
+    type=str,
+    help=""
+)
+@click.option(
+    "--val_samples",
+    "-vn",
+    default=150,
+    type=int,
+    help=""
+)
+@click.option(
+    "--test_samples",
+    "-tn",
+    default=0,
+    type=int,
+    help=""
+)
 def fine_tune(
-    input_cols: str,
+    methods: str,
     target_col: str,
     rel:str ,
     model_dir: str,
@@ -179,7 +217,8 @@ def fine_tune(
     save_checkpoints_steps: int,
     n_checkpoints_to_keep: int,
     info,
-    ds_fname
+    ds_fname,
+    split, train_samples, test_set, val_samples, test_samples
 ) -> None:
     if not do_train and not do_eval and not info:
         print("Specify train or evaluation flag. --do_train or --do_eval")
@@ -194,28 +233,30 @@ def fine_tune(
 
     task_names = []
     input_prefix = input_postfix = target_prefix = target_postfix = ""
-    for input_col in input_cols.split(","):
-        input_col = input_col.strip()
-        if ":" in input_col:
-            input_prefix, input_col, input_postfix = input_col.split(":")
-            if input_prefix and not input_prefix.endswith(" "):
-                input_prefix += " "
-            if input_postfix and not input_postfix.startswith(" "):
-                input_postfix = " " + input_postfix
-        if ":" in target_col:
-            target_prefix, target_col, target_postfix = target_col.split(":")
-            if target_prefix and not target_prefix.endswith(" "):
-                target_prefix += " "
-            if target_postfix and not target_postfix.startswith(" "):
-                target_postfix = " " + target_postfix
-        task_name  = input_col + "_" + target_col
+    input_col = "input_text"
+    for method in methods.split(","):
+        method = method.strip()
+        task_name  = method + "_" + target_col
         task_names.append(task_name)
         print("Task:", task_name)
         paths={}
-        paths["src"] = os.path.join(DATA_DIR, f"train.tsv")
+        paths["train"] = os.path.join(DATA_DIR, f"train.tsv")
+        paths["val"] = os.path.join(DATA_DIR, f"val_all_rels.tsv")
+        paths["test"] = os.path.join(DATA_DIR, f"test.tsv")
+        num_samples = {"train": int(train_samples), "val":int(val_samples), "sample":0, "test":int(test_samples)}
+        myds = {}
+        for split_name, df_path in paths.items():
+            split_df = pd.read_table(df_path)
+            ds = MyDataset(split_df, split_name, method, 
+                    num_samples = num_samples[split_name])
+            sel_df = pd.DataFrame(data = ds.get_data(),
+                                  columns = ["event","resp", "rel","index","rep"])
+            new_ds = Dataset.from_pandas(sel_df)
+            new_ds.set_format(type='tensorflow')
+            myds[split_name] = new_ds
 
         sel_cols = ["prefix", input_col, target_col]
-        df = pd.read_table(paths["src"])
+        df = pd.read_table(paths[split])
         if not "prefix" in df:
             raise Exception(f"prefix is not in dataframe")
         if not input_col in df:
@@ -239,18 +280,17 @@ def fine_tune(
         new_df.columns = ["prefix", "input_text", "target_text"]
         data_folder = os.path.join(model_dir, "data")
         Path(data_folder).mkdir(parents=True, exist_ok=True)
-        p = data_folder + f"/{rel}_{input_col}_train.tsv"
-    #
+        p = data_folder + f"/{rel}_{input_col}_{split}.tsv"
+        new_df = new_df.loc[:, ~new_df.columns.str.contains('^Unnamed')]
+        #
+        print("saving ...", p)
         new_df.to_csv(p, sep="\t", index = False)
-        if do_train:
-            split = "train"
-        else:
-            split = input_col
         paths[split] = p
         print(p)
         exp = Path(model_dir).stem
         print("Exp lable:", exp)
         num_lines =  {split: sum(1 for line in open(path)) for split,path in paths.items()}
+        print(paths)
 
         t5.data.TaskRegistry.add(
             task_name,
@@ -258,10 +298,11 @@ def fine_tune(
             core.MyTsvTask,
             #record_defaults = ["", "", ""],
             # Supply a function which returns a tf.data.Dataset.
+            myds = myds,
             sel_cols=sel_cols,
             split_to_filepattern=paths,
             num_input_examples=num_lines,
-            text_preprocessor=[preprocessors.tsv_rel_preprocessor(input_prefix, input_postfix, target_prefix, target_postfix)],
+            text_preprocessor=[], 
             # Lowercase targets before computing metrics.
             # postprocess_fn=t5.data.postprocessors.lower_text,
             # output_features=DEFAULT_OUTPUT_FEATURES
@@ -364,20 +405,19 @@ def fine_tune(
     if do_eval:
         print("============================ Validating =========================")
         summary_dir = "validation"
-        split = input_col
-        split_dir = os.path.join(model_dir, summary_dir, split)
+        split_dir = os.path.join(model_dir, summary_dir, test_set)
         #split_dir = summary_dir
         if True: #not os.path.isdir(split_dir):
             tf.io.gfile.makedirs(split_dir)
             print("=====================", split_dir, "=========================")
-            ref_file = paths["src"]
+            ref_file = paths[test_set]
             shutil.copy(ref_file, split_dir + "/src_df.tsv")
             model.eval(
                 mixture_or_task_name=mixture,
                 summary_dir=split_dir,
                 checkpoint_steps=eval_step,
                 #eval_with_score=True,
-                split=split,
+                split=test_set,
             )
 
 if __name__ == "__main__":
