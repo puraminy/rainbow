@@ -1,8 +1,9 @@
 #! /usr/bin/env python
 
 """Fine-tune the model on the rainbow datasets."""
-
+import seqio
 import logging
+import glob
 import os
 import shutil
 import click
@@ -12,6 +13,7 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import sys
 from comet.train.common import *
+from comet.train.eval import *
 from rainbow import utils, settings, core, rates, preprocessors
 import pandas as pd
 from pathlib import Path
@@ -83,7 +85,7 @@ PRETRAINED_MODELS = {
     help="The relation between input and target"
 )
 @click.option(
-    "--model-dir",
+    "--model_dir",
     envvar="PWD",
     #    multiple=True,
     type=click.Path(),
@@ -110,7 +112,7 @@ PRETRAINED_MODELS = {
     "--n-steps",
     "-ns",
     type=int,
-    default=5000,
+    default=0,
     help="The number of gradient updates. Defaults to 25,000.",
 )
 @click.option(
@@ -169,7 +171,7 @@ PRETRAINED_MODELS = {
 @click.option(
     "--split",
     "-sp",
-    default="train",
+    default="",
     type=str,
     help=""
 )
@@ -201,6 +203,19 @@ PRETRAINED_MODELS = {
     type=int,
     help=""
 )
+@click.option(
+    "--pred_pat",
+    "-pp",
+    default="",
+    type=str,
+    help=""
+)
+@click.option(
+    "--do_score",
+    "-ds",
+    is_flag=True,
+    help=""
+)
 def fine_tune(
     methods: str,
     target_col: str,
@@ -218,11 +233,18 @@ def fine_tune(
     n_checkpoints_to_keep: int,
     info,
     ds_fname,
-    split, train_samples, test_set, val_samples, test_samples
+    split, train_samples, test_set, val_samples, test_samples,
+    pred_pat, do_score
 ) -> None:
-    if not do_train and not do_eval and not info:
-        print("Specify train or evaluation flag. --do_train or --do_eval")
+    if not do_train and not do_eval and not info and not do_score:
+        print("Specify train or evaluation flag. --do_train or --do_eval --do_score")
         return
+    if not split:
+        if do_train: split = "train"
+        if do_eval or do_score: split = "test"
+    print("split:", split)
+    if n_steps == 0 and do_train:
+        n_steps = train_samples
     if not Path(model_dir).exists():
         Path(model_dir).mkdir(parents=True, exist_ok=True)
     if do_train and any(os.scandir(model_dir)):
@@ -246,23 +268,34 @@ def fine_tune(
         num_samples = {"train": int(train_samples), "val":int(val_samples), "sample":0, "test":int(test_samples)}
         myds = {}
         for split_name, df_path in paths.items():
+            if do_train and split_name != "train":
+                continue
+            if do_eval or do_score and split_name != split:
+                continue
+            
             split_df = pd.read_table(df_path)
             ds = MyDataset(split_df, split_name, method, 
                     num_samples = num_samples[split_name])
-            sel_df = pd.DataFrame(data = ds.get_data(),
-                                  columns = ["event","resp", "rel","index","rep"])
-            new_ds = Dataset.from_pandas(sel_df)
-            new_ds.set_format(type='tensorflow')
-            myds[split_name] = new_ds
+            myds[split_name]=ds
 
-        sel_cols = ["prefix", input_col, target_col]
-        df = pd.read_table(paths[split])
-        if not "prefix" in df:
-            raise Exception(f"prefix is not in dataframe")
-        if not input_col in df:
-            raise Exception(f"{input_col} is not in dataframe")
-        if not target_col in df:
-            raise Exception(f"{target_col} is not in dataframe")
+            _iter = iter(ds)
+            pbar = tqdm(total=ds.num_records, position=0, leave=True) #,dynamic_ncols=True)
+            ds_rows = []
+            for batch_list in batched(list(_iter), 10):
+                pbar.update(bs)
+                for (query, tail, rel, qid, reps) in batch_list:
+                    _data = {"event":query, "resp":tail, "rel":rel, "index":qid, "rep":reps}
+                    ds_rows.append(_data)
+
+            sel_df = pd.DataFrame(data = ds_rows,
+                                  columns = ["event","rel", "resp"])
+            temp_path = os.path.join(model_dir, "data") 
+            mkdir(temp_path)
+            temp_path += "/" + Path(df_path).name.replace(".tsv",f".{method}.tsv")
+            print(temp_path)
+            paths[split_name] = temp_path
+            sel_df.to_csv(temp_path, sep="\t", index=False) 
+
         if info:
             for col in df.columns:
                 print(col)
@@ -276,21 +309,11 @@ def fine_tune(
             target_file.close()
             return
 
-        new_df = df[sel_cols]
-        new_df.columns = ["prefix", "input_text", "target_text"]
-        data_folder = os.path.join(model_dir, "data")
-        Path(data_folder).mkdir(parents=True, exist_ok=True)
-        p = data_folder + f"/{rel}_{input_col}_{split}.tsv"
-        new_df = new_df.loc[:, ~new_df.columns.str.contains('^Unnamed')]
-        #
-        print("saving ...", p)
-        new_df.to_csv(p, sep="\t", index = False)
-        paths[split] = p
-        print(p)
         exp = Path(model_dir).stem
         print("Exp lable:", exp)
         num_lines =  {split: sum(1 for line in open(path)) for split,path in paths.items()}
         print(paths)
+        sel_cols = ["event", "rel", "resp"]
 
         t5.data.TaskRegistry.add(
             task_name,
@@ -298,11 +321,10 @@ def fine_tune(
             core.MyTsvTask,
             #record_defaults = ["", "", ""],
             # Supply a function which returns a tf.data.Dataset.
-            myds = myds,
             sel_cols=sel_cols,
             split_to_filepattern=paths,
             num_input_examples=num_lines,
-            text_preprocessor=[], 
+            text_preprocessor=[preprocessors.atomic_pp()], 
             # Lowercase targets before computing metrics.
             # postprocess_fn=t5.data.postprocessors.lower_text,
             # output_features=DEFAULT_OUTPUT_FEATURES
@@ -401,7 +423,8 @@ def fine_tune(
             temperature=1.0,  # sample according to predicted distribution
         )
         print("cd ", results_dir, "")
-
+    # vvvvvvvvvvvvvvvvvvvvv
+    split_dir = model_dir
     if do_eval:
         print("============================ Validating =========================")
         summary_dir = "validation"
@@ -419,6 +442,33 @@ def fine_tune(
                 #eval_with_score=True,
                 split=test_set,
             )
+    if do_score:
+        inps = glob.glob(f"{split_dir}/*{pred_pat}*predictions")
+        if len(inps) == 0:
+            print(f"A file with this pattern '{pred_pat}*predictions' wasn't found")
+            return
+        preds_file = inps[0]
+        ds = myds[split]
+        print("DS:", ds, "split:", split)
+        extra = "_" + now
+        model_id = Path(pm).stem
+        m_name = model_id + "-" + method
+        lang = "en2en"
+        w_str = "unwrapped"
+        f_str = "unfrozen"
+        epochs_num = 1
+        trial = 1
+        experiment = Path(split_dir).stem
+        exp_info = {"exp":experiment, "model":model_id, "lang": lang, 
+                        "method":method, 
+                        "wrap": w_str, 
+                        "frozen":f_str, 
+                        "steps":train_samples,
+                        "epochs":epochs_num,
+                        "trial":trial,
+                        "date":extra}
+        evaluate(ds, split_dir, exp_info, 
+                test_samples, preds_file = preds_file)
 
 if __name__ == "__main__":
     fine_tune()

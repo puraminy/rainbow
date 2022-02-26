@@ -124,16 +124,12 @@ def tsv_atomic(mt):
         )
     return rel_preprocessor
 
-def tsv_rel_preprocessor(input_prefix, input_postfix, target_prefix, target_postfix, input_col="input_text", target_col="target_text"):
+def atomic_pp(input_col="event", target_col="resp"):
     def rel_preprocessor(ds):
         def to_inputs_and_targets(ex):
             return {
-                "inputs": tf.strings.join(
-                    [input_prefix, ex[input_col], input_postfix]
-                ),
-                "targets": tf.strings.join(
-                    [target_prefix, ex[target_col], target_postfix]
-                )
+                "inputs": ex[input_col],
+                "targets": ex[target_col]
             }
         return ds.map(
             to_inputs_and_targets, num_parallel_calls=tf.data.experimental.AUTOTUNE

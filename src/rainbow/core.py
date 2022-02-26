@@ -4,6 +4,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Union
 import functools
 import t5
 import tensorflow as tf
+import seqio
 
 from . import utils
 
@@ -40,7 +41,6 @@ class MyTsvTask(t5.data.Task):
         self,
         name: str,
         sel_cols: List,
-        myds, 
         split_to_filepattern: Dict[str, str],
         num_input_examples: Dict[str, int],
         text_preprocessor: Union[Callable, Sequence[Callable]],
@@ -51,12 +51,8 @@ class MyTsvTask(t5.data.Task):
         self.split_paths = split_to_filepattern
         self.exampes_nums = num_input_examples
         self.sel_cols = sel_cols,
-        self.myds = myds
 
         def dataset_fn(split, shuffle_files=False):
-            return self.myds[split]
-
-        def dataset_fn_tf(split, shuffle_files=False):
             # We only have one file for each split.
             del shuffle_files
 
@@ -75,9 +71,10 @@ class MyTsvTask(t5.data.Task):
             )
             # Map each tuple to a {"question": ... "answer": ...} dict.
             ds = ds.map(
-                lambda *ex: dict(zip(["prefix","input_text","target_text"], ex))
+                lambda *ex: dict(zip(["event","rel","resp"], ex))
                 #functools.partial(to_inputs_and_targets, ex))
             )
+            #ds = seqio.preprocessors.append_eos(ds, output_features)
             if truncate_to is not None and split == "train":
                 ds = ds.shuffle(
                     buffer_size=int(num_input_examples[split]),
