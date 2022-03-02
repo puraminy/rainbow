@@ -63,8 +63,8 @@ class MyTsvTask(t5.data.Task):
                 functools.partial(
                     tf.io.decode_csv,
                     record_defaults=["", "", ""],
-                    field_delim="\t",
-                    use_quote_delim=False,
+                    field_delim=",",
+                    use_quote_delim=True,
                     #select_cols= sel_cols,
                 ),
                 num_parallel_calls=tf.data.experimental.AUTOTUNE,

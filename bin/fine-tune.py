@@ -68,13 +68,13 @@ PRETRAINED_MODELS = {
 @click.option(
     "--methods",
     "-mt",
-    default="sup",
+    default="",
     type=str,
     help=""
 )
 @click.option(
     "--target_col",
-    default="target_text",
+    default="resp",
     type=str,
     help=""
 )
@@ -86,6 +86,7 @@ PRETRAINED_MODELS = {
 )
 @click.option(
     "--model_dir",
+    "-md",
     envvar="PWD",
     #    multiple=True,
     type=click.Path(),
@@ -104,8 +105,9 @@ PRETRAINED_MODELS = {
 )
 @click.option(
     "--pm",
+    "-pm",
     type=str,
-    default="t5_base",
+    default="",
     help="The path to or name of the pret model. ",
 )
 @click.option(
@@ -124,7 +126,7 @@ PRETRAINED_MODELS = {
 @click.option(
     "--learning-rate",
     type=float,
-    default=3e-3,
+    default=1e-3, ##6.25e-05, #3e-3,
     help="The learning rate to use for training. Defaults to 3e-3.",
 )
 @click.option(
@@ -132,15 +134,16 @@ PRETRAINED_MODELS = {
 )
 @click.option(
     "--bs",
+    "-bs",
     type=int,
     default=8,
     help="Batch size",
 )
 @click.option(
     "--save-checkpoints-steps",
-    "-s",
+    "-ss",
     type=int,
-    default=5000,
+    default=900,
     help=(
         "The number of steps to take before saving a checkpoint. Defaults to"
         " 5000."
@@ -150,7 +153,7 @@ PRETRAINED_MODELS = {
     "--n-checkpoints-to-keep",
     "-n",
     type=int,
-    default=2,
+    default=30,
     help=(
         "The number of checkpoints to keep during fine-tuning. Defaults"
         " to 4."
@@ -199,7 +202,7 @@ PRETRAINED_MODELS = {
 @click.option(
     "--test_samples",
     "-tn",
-    default=0,
+    default=1000,
     type=int,
     help=""
 )
@@ -214,6 +217,26 @@ PRETRAINED_MODELS = {
     "--do_score",
     "-ds",
     is_flag=True,
+    help=""
+)
+@click.option(
+    "--start",
+    "-st",
+    default=0,
+    type=int,
+    help="The start of training examples"
+)
+@click.option(
+    "--sel_train",
+    "-sel",
+    is_flag=True,
+    help=""
+)
+@click.option(
+    "--summary_dir",
+    "-sd",
+    default="validation",
+    type=str,
     help=""
 )
 def fine_tune(
@@ -234,48 +257,64 @@ def fine_tune(
     info,
     ds_fname,
     split, train_samples, test_set, val_samples, test_samples,
-    pred_pat, do_score
+    pred_pat, do_score, start, sel_train, summary_dir
 ) -> None:
+    if not methods:
+        print("Please specify pretraiend method")
+        return
+    if not pm and do_train:
+        print("Please specify pretraiend model")
+        return
     if not do_train and not do_eval and not info and not do_score:
         print("Specify train or evaluation flag. --do_train or --do_eval --do_score")
         return
     if not split:
-        if do_train: split = "train"
-        if do_eval or do_score: split = "test"
+        if do_train: 
+            split = "train"
+        elif do_eval or do_score: 
+            split = "test"
     print("split:", split)
     if n_steps == 0 and do_train:
         n_steps = train_samples
     if not Path(model_dir).exists():
         Path(model_dir).mkdir(parents=True, exist_ok=True)
     if do_train and any(os.scandir(model_dir)):
-        temp = glob.glob("model.ckpt*")
+        temp = glob.glob(model_dir + "/model.ckpt*")
         if len(temp) == 0:
             print("The folder must contain a checkpoint or be empty!")
             return
 
     task_names = []
     input_prefix = input_postfix = target_prefix = target_postfix = ""
-    input_col = "input_text"
+    input_col = "event"
     for method in methods.split(","):
         method = method.strip()
-        task_name  = method + "_" + target_col
+        task_name  = "_" + method  
+        task_name = task_name.replace("-","_")
         task_names.append(task_name)
         print("Task:", task_name)
         paths={}
-        paths["train"] = os.path.join(DATA_DIR, f"train.tsv")
-        paths["val"] = os.path.join(DATA_DIR, f"val_all_rels.tsv")
+        if sel_train:
+            paths["train"] = os.path.join(DATA_DIR, f"sel_train.tsv")
+        else:
+            paths["train"] = os.path.join(DATA_DIR, f"train.tsv")
+        #paths["val"] = os.path.join(DATA_DIR, f"val_all_rels.tsv")
         paths["test"] = os.path.join(DATA_DIR, f"test.tsv")
         num_samples = {"train": int(train_samples), "val":int(val_samples), "sample":0, "test":int(test_samples)}
         myds = {}
         for split_name, df_path in paths.items():
-            if do_train and split_name != "train":
-                continue
-            if do_eval or do_score and split_name != split:
+            if split_name == "train" and not do_train and not test_set == "train":
                 continue
             
+            if split_name != "train" and not (do_eval or do_score or info):
+                continue
+            _start = 0
+            if split_name == "train":
+                _start = start
             split_df = pd.read_table(df_path)
+            is_even = num_samples[split_name] > 0
             ds = MyDataset(split_df, split_name, method, 
-                    num_samples = num_samples[split_name])
+                    num_samples = num_samples[split_name], is_even=is_even, start=_start)
             myds[split_name]=ds
 
             _iter = iter(ds)
@@ -283,30 +322,29 @@ def fine_tune(
             ds_rows = []
             for batch_list in batched(list(_iter), 10):
                 pbar.update(bs)
-                for (query, tail, rel, qid, reps) in batch_list:
-                    _data = {"event":query, "resp":tail, "rel":rel, "index":qid, "rep":reps}
+                for (query, inp, tail, rel, qid, reps) in batch_list:
+                    _data = {"event":query.strip(), "resp":tail.strip(), "rel":rel.strip(), 
+                            "index":qid, "rep":reps}
                     ds_rows.append(_data)
 
             sel_df = pd.DataFrame(data = ds_rows,
                                   columns = ["event","rel", "resp"])
             temp_path = os.path.join(model_dir, "data") 
             mkdir(temp_path)
-            temp_path += "/" + Path(df_path).name.replace(".tsv",f".{method}.tsv")
+            temp_path += "/" + Path(df_path).name.replace(".tsv",f".{method}.csv")
             print(temp_path)
             paths[split_name] = temp_path
-            sel_df.to_csv(temp_path, sep="\t", index=False) 
+            sel_df.to_csv(temp_path, float_format=str, index=False) 
 
         if info:
-            for col in df.columns:
-                print(col)
-            print(df[[input_col, target_col]].head())
-            input_file = open(ds_fname + "." + input_col, "w")
-            target_file = open(ds_fname + "." + target_col, "w")
+            df = sel_df
+            ii = 0
             for idx, row in df.iterrows():
-                print(input_prefix + str(row[input_col]) + input_postfix, file=input_file)
-                print(target_prefix + str(row[target_col]) + target_postfix, file=target_file)
-            input_file.close()
-            target_file.close()
+                for col in df.columns:
+                    print(col, ":", row[col])
+                ii += 1
+                if ii > 5:
+                    break
             return
 
         exp = Path(model_dir).stem
@@ -337,6 +375,8 @@ def fine_tune(
 
 
     mixture = "_".join(task_names)
+    while "__" in mixture:
+        mixture = mixture.replace("__", "_")
     print("Mixture:", mixture, ":", task_names)
     t5.data.MixtureRegistry.add(
         mixture,
@@ -346,7 +386,7 @@ def fine_tune(
 
 
     """Fine-tune the model on MIXTURE, writing results to RESULTS_DIR."""
-    if not pm in PRETRAINED_MODELS:
+    if pm and not pm in PRETRAINED_MODELS:
         raise ValueError(pm + " path isn't introduced in PRETRAINED_MODELS")
 
     if pm.startswith("t5_") and mixture.startswith("mt5_"):
@@ -382,7 +422,8 @@ def fine_tune(
 #    for ex in tfds.as_numpy(ds.take(5)):
 #        tf.print(ex)
 #    # Process arguments.
-    pm = PRETRAINED_MODELS[pm]
+    if pm:
+        pm = PRETRAINED_MODELS[pm]
 
     # Run fine-tuning.
 
@@ -424,11 +465,10 @@ def fine_tune(
         )
         print("cd ", results_dir, "")
     # vvvvvvvvvvvvvvvvvvvvv
-    split_dir = model_dir
+    split_dir = os.path.join(model_dir, summary_dir, test_set + "_" + human_format(test_samples))
+    print("Split dir:", split_dir)
     if do_eval:
         print("============================ Validating =========================")
-        summary_dir = "validation"
-        split_dir = os.path.join(model_dir, summary_dir, test_set)
         #split_dir = summary_dir
         if True: #not os.path.isdir(split_dir):
             tf.io.gfile.makedirs(split_dir)
@@ -448,10 +488,10 @@ def fine_tune(
             print(f"A file with this pattern '{pred_pat}*predictions' wasn't found")
             return
         preds_file = inps[0]
-        ds = myds[split]
-        print("DS:", ds, "split:", split)
+        ds = myds[test_set]
+        print("DS:", ds, "split:", test_set)
         extra = "_" + now
-        model_id = Path(pm).stem
+        model_id = Path(pm).stem if pm else Path(model_dir).stem
         m_name = model_id + "-" + method
         lang = "en2en"
         w_str = "unwrapped"
