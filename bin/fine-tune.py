@@ -37,6 +37,7 @@ MT5_DEFAULT_SPM_PATH = os.path.join(
 )
 extra_tokens = ["<xIntent>", "<xNeed>", "<xAttr>", "<xReact>", 
         "<xIntent_0>", "<xIntent_1>", "<xIntent_2>", "<gen_en>", 
+        "<extra_id_0>", "<extra_id_1>", "<extra_id_2>", "<extra_id_3>", 
         "<xIntent_3>", "<xIntent_4>",
         "<xNeed_0>", "<xNeed_1>", "<xNeed_2>", "<xNeed_3>", "<xNeed_4>",
         "<Attr_0>", "<xAttr_1>", "<xAttr_2>", "<xAttr_3>", "<xAttr_4>",
