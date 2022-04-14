@@ -1,6 +1,10 @@
 #! /usr/bin/env python
 
 """Fine-tune the model on the rainbow datasets."""
+import torch
+import functools
+import transformers
+from transformers.optimization import *
 import seqio
 import logging
 import glob
@@ -31,9 +35,14 @@ T5_DEFAULT_SPM_PATH = os.path.join(
 MT5_DEFAULT_SPM_PATH = os.path.join(
     BASE_DIR, "pret/mt5/sentencepiece.model"
 )
+extra_tokens = ["<xIntent>", "<xNeed>", "<xAttr>", "<xReact>", 
+        "<xIntent_0>", "<xIntent_1>", "<xIntent_2>", "<gen_en>", 
+        "<xIntent_3>", "<xIntent_4>",
+        "<xNeed_0>", "<xNeed_1>", "<xNeed_2>", "<xNeed_3>", "<xNeed_4>",
+        "<Attr_0>", "<xAttr_1>", "<xAttr_2>", "<xAttr_3>", "<xAttr_4>",
+        "<xReact_0>", "<xReact_1>", "<xReact_2>", "<xReact_3>", "<xReact_4>"]
 
-
-T5_DEFAULT_VOCAB = t5.data.SentencePieceVocabulary(T5_DEFAULT_SPM_PATH)
+T5_DEFAULT_VOCAB = t5.data.SentencePieceVocabulary(T5_DEFAULT_SPM_PATH, extra_tokens=extra_tokens)
 MT5_DEFAULT_VOCAB = t5.data.SentencePieceVocabulary(MT5_DEFAULT_SPM_PATH)
 MT5_OUTPUT_FEATURES = {
     "inputs": t5.data.Feature(
@@ -55,7 +64,10 @@ logger = logging.getLogger(__name__)
 PRETRAINED_MODELS = {
     "t5_small": os.path.join(BASE_DIR, "pret/t5/small"),
     "t5_base": os.path.join(BASE_DIR, "pret/t5/base"),
+    "t5-base": os.path.join(BASE_DIR, "pret/t5-base"),
     "t5_large": os.path.join(BASE_DIR, "pret/t5/large"),
+    "t5-large": os.path.join(BASE_DIR, "pret/t5-large"),
+    "t5-small": os.path.join(BASE_DIR, "pret/t5-small"),
     "mt5_small": os.path.join(BASE_DIR, "pret/mt5/small"),
     "mt5_base": os.path.join(BASE_DIR, "pret/mt5/base"),
     "mt5_sa2": os.path.join(BASE_DIR, "pret/mt5/small_atomic_2"),
@@ -79,8 +91,9 @@ PRETRAINED_MODELS = {
     help=""
 )
 @click.option(
-    "--rel",
-    default="xIntent",
+    "--rel_filter",
+    "-rel",
+    default="",
     type=str,
     help="The relation between input and target"
 )
@@ -143,7 +156,7 @@ PRETRAINED_MODELS = {
     "--save-checkpoints-steps",
     "-ss",
     type=int,
-    default=900,
+    default=2700,
     help=(
         "The number of steps to take before saving a checkpoint. Defaults to"
         " 5000."
@@ -182,6 +195,13 @@ PRETRAINED_MODELS = {
     "--train_samples",
     "-n",
     default=0,
+    type=int,
+    help=""
+)
+@click.option(
+    "--repeat",
+    "-rep",
+    default=1,
     type=int,
     help=""
 )
@@ -239,10 +259,29 @@ PRETRAINED_MODELS = {
     type=str,
     help=""
 )
+@click.option(
+    "--replace_blanks",
+    "-rb",
+    is_flag=True,
+    help=""
+)
+@click.option(
+    "--hf",
+    "-hf",
+    is_flag=True,
+    help="Huggigface flag"
+)
+@click.option(
+    "--scorers",
+    "-scs",
+    default="rouge_bert",
+    type=str,
+    help=""
+)
 def fine_tune(
     methods: str,
     target_col: str,
-    rel:str ,
+    rel_filter:str ,
     model_dir: str,
     do_train,
     do_eval,
@@ -256,8 +295,8 @@ def fine_tune(
     n_checkpoints_to_keep: int,
     info,
     ds_fname,
-    split, train_samples, test_set, val_samples, test_samples,
-    pred_pat, do_score, start, sel_train, summary_dir
+    split, train_samples, repeat, test_set, val_samples, test_samples,
+    pred_pat, do_score, start, sel_train, summary_dir, replace_blanks, hf, scorers
 ) -> None:
     if not methods:
         print("Please specify pretraiend method")
@@ -275,10 +314,10 @@ def fine_tune(
             split = "test"
     print("split:", split)
     if n_steps == 0 and do_train:
-        n_steps = train_samples
+        n_steps = train_samples * repeat
     if not Path(model_dir).exists():
         Path(model_dir).mkdir(parents=True, exist_ok=True)
-    if do_train and any(os.scandir(model_dir)):
+    if False: #do_train and any(os.scandir(model_dir)):
         temp = glob.glob(model_dir + "/model.ckpt*")
         if len(temp) == 0:
             print("The folder must contain a checkpoint or be empty!")
@@ -313,8 +352,15 @@ def fine_tune(
                 _start = start
             split_df = pd.read_table(df_path)
             is_even = num_samples[split_name] > 0
+            _repeat = 1
+            if split_name == "train":
+                _repeat = repeat 
+            _num = num_samples[split_name] * _repeat
             ds = MyDataset(split_df, split_name, method, 
-                    num_samples = num_samples[split_name], is_even=is_even, start=_start)
+                    num_samples = _num,
+                    is_even=is_even, start=_start, repeat=_repeat,
+                    rel_filter=rel_filter,
+                    replace_blanks=replace_blanks)
             myds[split_name]=ds
 
             _iter = iter(ds)
@@ -370,7 +416,7 @@ def fine_tune(
             metric_fns=[t5.evaluation.metrics.accuracy],
             # Not required, but helps for mixing and auto-caching.
             # num_input_examples=num_atomic_examples
-            output_features=MT5_OUTPUT_FEATURES  if pm.startswith("mt5") else None
+            output_features=MT5_OUTPUT_FEATURES  if pm.startswith("mt5") else T5_OUTPUT_FEATURES
         )
 
 
@@ -422,48 +468,83 @@ def fine_tune(
 #    for ex in tfds.as_numpy(ds.take(5)):
 #        tf.print(ex)
 #    # Process arguments.
+    pm_dir = ""
     if pm:
-        pm = PRETRAINED_MODELS[pm]
+        pm_dir = PRETRAINED_MODELS[pm]
 
     # Run fine-tuning.
+    if hf:
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
 
-    model = t5.models.MtfModel(
-        tpu=None,
-        model_dir=model_dir,
-        model_parallelism=8,
-        batch_size=batch_size,
-        sequence_length={"inputs": 128, "targets": 128},
-        mesh_shape="model:1,batch:1",
-        mesh_devices=["gpu:0"],
-        learning_rate_schedule=learning_rate,
-        save_checkpoints_steps=save_checkpoints_steps,
-        keep_checkpoint_max=n_checkpoints_to_keep,
-        iterations_per_loop=100,
-    )
+        model = t5.models.HfPyTorchModel(pm_dir, pm_dir, device)
+    else:
+        model = t5.models.MtfModel (
+            tpu=None,
+            model_dir=model_dir,
+            model_parallelism=8,
+            batch_size=batch_size,
+            sequence_length={"inputs": 128, "targets": 128},
+            mesh_shape="model:1,batch:1",
+            mesh_devices=["gpu:0"],
+            learning_rate_schedule=learning_rate,
+            save_checkpoints_steps=save_checkpoints_steps,
+            keep_checkpoint_max=n_checkpoints_to_keep,
+            iterations_per_loop=100,
+        )
+#    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#    model = t5.models.HfPyTorchModel (
+#        model_spec=pm,
+#        model_dir=model_dir,
+#        device=device
+#    )
+#    torch.cuda.empty_cache()
     if do_train:
         print("============================ Training =========================")
         try:
-            model.finetune(
-                mixture_or_task_name=mixture,
-                pretrained_model_dir=pm,
-                finetune_steps=n_steps,
-                split=split,
-            )
+           if hf:
+               op_type = "adam"
+               if op_type == "ada":
+                   optimizer = Adafactor(model._model.parameters(), scale_parameter=True, relative_step=True, warmup_init=True, lr=None)
+                   lr_scheduler = AdafactorSchedule(optimizer)
+               else:
+                   optimizer = AdamW(model._model.parameters(),lr=learning_rate,eps=1e-8)
+                   lr_scheduler = get_constant_schedule_with_warmup(optimizer, 100) #, n_steps)
+               model.train(
+                    mixture_or_task_name=mixture,
+                    steps=n_steps,
+                    save_steps=save_checkpoints_steps,
+                    sequence_length={"inputs": 10, "targets": 14},
+                    split="train",
+                    batch_size=1,
+                    optimizer= optimizer,
+                    learning_rate_scheduler=lr_scheduler
+               )
+           else:
+               model.finetune(
+                  mixture_or_task_name=mixture,
+                  pretrained_model_dir=pm_dir,
+                  finetune_steps=n_steps,
+                  split=split,
+               )
         except KeyboardInterrupt:
             print("Saving model")
 
-        export_dir = os.path.join(results_dir, "export")
-        task_vocab = t5.models.utils.get_vocabulary(mixture)
+        if False:
+            export_dir = os.path.join(results_dir, "export")
+            task_vocab = t5.models.utils.get_vocabulary(mixture)
 
-        model.batch_size = 1  # make one prediction per call
-        saved_model_path = model.export(
-            export_dir,
-            checkpoint_step=-1,  # use most recent
-            beam_size=1,  # no beam search
-            vocabulary=task_vocab,
-            temperature=1.0,  # sample according to predicted distribution
-        )
-        print("cd ", results_dir, "")
+            model.batch_size = 1  # make one prediction per call
+            saved_model_path = model.export(
+                export_dir,
+                checkpoint_step=-1,  # use most recent
+                beam_size=1,  # no beam search
+                vocabulary=task_vocab,
+                temperature=1.0,  # sample according to predicted distribution
+            )
+            print("cd ", results_dir, "")
     # vvvvvvvvvvvvvvvvvvvvv
     split_dir = os.path.join(model_dir, summary_dir, test_set + "_" + human_format(test_samples))
     print("Split dir:", split_dir)
@@ -508,7 +589,7 @@ def fine_tune(
                         "trial":trial,
                         "date":extra}
         evaluate(ds, split_dir, exp_info, 
-                test_samples, preds_file = preds_file)
+                test_samples, preds_file = preds_file, scorers=scorers)
 
 if __name__ == "__main__":
     fine_tune()
