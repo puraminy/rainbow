@@ -64,6 +64,8 @@ T5_OUTPUT_FEATURES = {
 logger = logging.getLogger(__name__)
 PRETRAINED_MODELS = {
     "t5_small": os.path.join(BASE_DIR, "pret/t5/small"),
+    "t5_v1": os.path.join(BASE_DIR, "pret/t5/v1"),
+    "t5_lmb": os.path.join(BASE_DIR, "pret/t5/lmb"),
     "t5_base": os.path.join(BASE_DIR, "pret/t5/base"),
     "t5-base": os.path.join(BASE_DIR, "pret/t5-base"),
     "t5_large": os.path.join(BASE_DIR, "pret/t5/large"),
@@ -207,6 +209,13 @@ PRETRAINED_MODELS = {
     help=""
 )
 @click.option(
+    "--samples_per_head",
+    "-sph",
+    default=3,
+    type=int,
+    help=""
+)
+@click.option(
     "--test_set",
     "-ts",
     default="test",
@@ -275,7 +284,7 @@ PRETRAINED_MODELS = {
 @click.option(
     "--scorers",
     "-scs",
-    default="rouge_bert",
+    default="rouge",
     type=str,
     help=""
 )
@@ -296,7 +305,7 @@ def fine_tune(
     n_checkpoints_to_keep: int,
     info,
     ds_fname,
-    split, train_samples, repeat, test_set, val_samples, test_samples,
+    split, train_samples, repeat, samples_per_head, test_set, val_samples, test_samples,
     pred_pat, do_score, start, sel_train, summary_dir, replace_blanks, hf, scorers
 ) -> None:
     if not methods:
@@ -315,7 +324,7 @@ def fine_tune(
             split = "test"
     print("split:", split)
     if n_steps == 0 and do_train:
-        n_steps = train_samples * repeat
+        n_steps = train_samples * repeat * samples_per_head
     if not Path(model_dir).exists():
         Path(model_dir).mkdir(parents=True, exist_ok=True)
     if False: #do_train and any(os.scandir(model_dir)):
@@ -352,15 +361,16 @@ def fine_tune(
             if split_name == "train":
                 _start = start
             split_df = pd.read_table(df_path)
-            is_even = num_samples[split_name] > 0
+            #is_even = num_samples[split_name] > 0
+            is_even = False
             _repeat = 1
-            if split_name == "train":
-                _repeat = repeat 
-            _num = num_samples[split_name] * _repeat
+            #if split_name == "train":
+            #    _repeat = repeat 
+            _num = num_samples[split_name] #* _repeat
             ds = MyDataset(split_df, split_name, method, 
                     num_samples = _num,
                     is_even=is_even, start=_start, repeat=_repeat,
-                    rel_filter=rel_filter,
+                    rel_filter=rel_filter,samples_per_head= samples_per_head,
                     replace_blanks=replace_blanks)
             myds[split_name]=ds
 
@@ -547,7 +557,7 @@ def fine_tune(
             )
             print("cd ", results_dir, "")
     # vvvvvvvvvvvvvvvvvvvvv
-    split_dir = os.path.join(model_dir, summary_dir, test_set + "_" + human_format(test_samples))
+    split_dir = os.path.join(model_dir, summary_dir)
     print("Split dir:", split_dir)
     if do_eval:
         print("============================ Validating =========================")
@@ -586,10 +596,12 @@ def fine_tune(
                         "wrap": w_str, 
                         "frozen":f_str, 
                         "steps":train_samples,
+                        "pre_prefix": "",
+                        "prefixed": False,
                         "epochs":epochs_num,
                         "trial":trial,
                         "date":extra}
-        evaluate(ds, split_dir, exp_info, 
+        evaluate(ds, None, split_dir, exp_info, 
                 test_samples, preds_file = preds_file, scorers=scorers)
 
 if __name__ == "__main__":
